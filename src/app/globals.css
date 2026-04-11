@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+/* ── Class-based dark mode ── */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Design tokens ── */
+@theme {
+  --color-brand-indigo: #4f46e5;
+  --color-brand-purple: #7c3aed;
+  --color-brand-violet: #6d5efc;
+}
+
+/* ── Base reset ── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+  background: #f8fafc;
+  color: #0f172a;
+  transition: background-color 220ms ease, color 220ms ease;
+}
+
+a { color: inherit; text-decoration: none; }
+
+/* Dark mode base — Tailwind reads .dark on <html> */
+html.dark body {
+  background: #0b1020;
+  color: #e2e8f0;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar        { width: 5px; height: 5px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: rgba(15,23,42,.18); border-radius: 999px; }
+html.dark ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); }
+
+/* Hide scrollbar but keep scroll (Chat tab row on mobile) */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar { display: none; }
+
+/* ── Smooth colour transitions — opt-in ── */
+.tc {
+  transition: background-color 180ms ease, border-color 180ms ease,
+              color 180ms ease, box-shadow 180ms ease;
+}
+
+/* ── iOS safe area ── */
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+/* ── Remove tap highlight on mobile ── */
+button { -webkit-tap-highlight-color: transparent; }
