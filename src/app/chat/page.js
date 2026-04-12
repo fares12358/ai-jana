@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft, Sun, Moon, LogOut,
   BookOpen, FileText, HelpCircle, Sparkles, Send,
-  AlertCircle, RefreshCw,
+  AlertCircle, RefreshCw, CheckCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth, useTheme } from "@/context/AppContext";
@@ -17,166 +17,395 @@ import {
   apiExplain,
 } from "@/utils/api";
 
-/* ── timestamp helper ─────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════
+   RESPONSE PARSERS
+   These handle every shape the backend might return without throwing.
+══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Recursively convert any value to a readable string.
+ * Handles: string | number | boolean | null | object | array
+ */
+function deepStr(val) {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  if (Array.isArray(val)) return val.map(deepStr).filter(Boolean).join(", ");
+  if (typeof val === "object") {
+    // Try common text fields in priority order
+    const textFields = ["text", "content", "label", "value", "name", "title", "description", "answer", "option"];
+    for (const f of textFields) {
+      if (typeof val[f] === "string" && val[f].trim()) return val[f];
+    }
+    // Fall back to first string-valued property
+    for (const v of Object.values(val)) {
+      if (typeof v === "string" && v.trim()) return v;
+    }
+    return JSON.stringify(val);
+  }
+  return String(val);
+}
+
+/**
+ * Parse a single quiz question from any known shape into a normalised object:
+ * { question: string, options: string[], correct: string | null, explanation: string | null }
+ */
+function parseQuestion(raw, idx) {
+  if (!raw || typeof raw !== "object") {
+    return { question: deepStr(raw), options: [], correct: null, explanation: null };
+  }
+
+  // Question text — many possible field names
+  const question =
+    raw.question ?? raw.text ?? raw.q ??
+    raw.stem ?? raw.prompt ?? raw.content ??
+    raw.title ?? `Question ${idx + 1}`;
+
+  // Options — handle: string[], object[], {A,B,C,D}, {options:{A,B,C,D}}
+  let options = [];
+
+  if (Array.isArray(raw.options)) {
+    options = raw.options.map(deepStr);
+  } else if (Array.isArray(raw.choices)) {
+    options = raw.choices.map(deepStr);
+  } else if (Array.isArray(raw.answers)) {
+    options = raw.answers.map(deepStr);
+  } else if (raw.options && typeof raw.options === "object") {
+    // options = { A: "...", B: "...", ... }
+    options = Object.entries(raw.options).map(([k, v]) => `${k}) ${deepStr(v)}`);
+  } else if (raw.A || raw.B || raw.C || raw.D) {
+    // Flat: { A: "...", B: "...", C: "...", D: "..." }
+    options = ["A", "B", "C", "D"]
+      .filter(k => raw[k] !== undefined)
+      .map(k => `${k}) ${deepStr(raw[k])}`);
+  }
+
+  // Correct answer
+  const correct =
+    raw.correct_answer ?? raw.correct ?? raw.answer ??
+    raw.right_answer ?? raw.solution ?? null;
+
+  // Explanation
+  const explanation = raw.explanation ?? raw.reason ?? raw.rationale ?? null;
+
+  return {
+    question: deepStr(question),
+    options,
+    correct: correct !== null ? deepStr(correct) : null,
+    explanation: explanation !== null ? deepStr(explanation) : null,
+  };
+}
+
+/**
+ * Parse the full quiz API response into an array of normalised question objects.
+ * Returns null if nothing quiz-like is found (caller will fall back to raw text).
+ */
+function parseQuizData(data) {
+  if (!data) return null;
+
+  // Try every possible wrapper
+  const arr =
+    (Array.isArray(data) ? data : null) ??
+    (Array.isArray(data.questions) ? data.questions : null) ??
+    (Array.isArray(data.quiz) ? data.quiz : null) ??
+    (Array.isArray(data.items) ? data.items : null) ??
+    (Array.isArray(data.results) ? data.results : null) ??
+    null;
+
+  if (!arr || arr.length === 0) return null;
+  return arr.map(parseQuestion);
+}
+
+/**
+ * Parse the summary/knowledge-card API response into a display string.
+ */
+function parseSummaryData(data) {
+  if (!data) return "No summary available.";
+  if (typeof data === "string") return data;
+
+  // Direct summary field
+  if (typeof data.summary === "string" && data.summary.trim()) return data.summary;
+
+  // Knowledge card nested object
+  const kc = data.knowledge_card ?? data.knowledgeCard ?? data.card ?? data;
+  if (typeof kc === "object" && kc !== null) {
+    const parts = [];
+    if (kc.title) parts.push(`📘 ${deepStr(kc.title)}`);
+    if (kc.overview || kc.description) parts.push(`\n${deepStr(kc.overview ?? kc.description)}`);
+
+    const concepts = kc.key_concepts ?? kc.keyConcepts ?? kc.concepts ?? kc.topics ?? [];
+    if (Array.isArray(concepts) && concepts.length) {
+      parts.push("\n\n🔑 Key Concepts:");
+      concepts.forEach(c => {
+        const label = typeof c === "string" ? c : deepStr(c.concept ?? c.name ?? c.title ?? c);
+        const detail = typeof c === "object" ? (c.definition ?? c.description ?? c.explanation ?? "") : "";
+        parts.push(`  • ${label}${detail ? `: ${detail}` : ""}`);
+      });
+    }
+
+    const topics = kc.main_topics ?? kc.mainTopics ?? [];
+    if (Array.isArray(topics) && topics.length) {
+      parts.push("\n\n📌 Main Topics:");
+      topics.forEach(t => parts.push(`  • ${deepStr(typeof t === "object" ? (t.topic ?? t.name ?? t) : t)}`));
+    }
+
+    const points = kc.key_points ?? kc.keyPoints ?? kc.bullet_points ?? [];
+    if (Array.isArray(points) && points.length) {
+      parts.push("\n\n📝 Key Points:");
+      points.forEach(p => parts.push(`  • ${deepStr(p)}`));
+    }
+
+    if (kc.conclusion || kc.summary_text) {
+      parts.push(`\n\n✅ Conclusion:\n${deepStr(kc.conclusion ?? kc.summary_text)}`);
+    }
+
+    const result = parts.join("\n").trim();
+    return result || JSON.stringify(kc, null, 2);
+  }
+
+  // Absolute fallback
+  return JSON.stringify(data, null, 2);
+}
+
+/**
+ * Parse chat / explain response to a plain string.
+ */
+function parseChatData(data) {
+  if (!data) return "No response received.";
+  if (typeof data === "string") return data;
+  return deepStr(
+    data.response ?? data.explanation ?? data.answer ??
+    data.message ?? data.text ?? data.content ?? data
+  );
+}
+
+/* ── timestamp ────────────────────────────────────────────────────── */
 const ts = () => {
   const n = new Date();
   return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`;
 };
 
-/* ── format any API response into a display string ───────────────── */
-function formatResponse(data, tab) {
-  if (!data) return "No response received.";
+/* ── Message types ────────────────────────────────────────────────── */
+// type: "text" | "quiz" | "summary"
+// For "quiz": payload = QuizQuestion[]
+// For "text" | "summary": payload = string
 
-  // Chat / Explain
-  if (typeof data === "string") return data;
-  if (data.response)     return data.response;
-  if (data.explanation)  return data.explanation;
-  if (data.answer)       return data.answer;
+/* ══════════════════════════════════════════════════════════════════════
+   QUIZ MESSAGE RENDERER
+   Renders a nicely structured quiz card instead of raw text.
+══════════════════════════════════════════════════════════════════════ */
+function QuizMessage({ questions }) {
+  const [revealed, setRevealed] = useState({});     // { [idx]: true } when answer shown
+  const [selected, setSelected] = useState({});     // { [idx]: optionIndex }
 
-  // Summary — Knowledge Card object
-  if (tab === "summary") {
-    if (data.summary)       return data.summary;
-    if (data.knowledge_card) {
-      const kc = data.knowledge_card;
-      const parts = [];
-      if (kc.title)    parts.push(`📘 ${kc.title}`);
-      if (kc.overview) parts.push(`\n${kc.overview}`);
-      if (Array.isArray(kc.key_concepts) && kc.key_concepts.length) {
-        parts.push("\n\n🔑 Key Concepts:");
-        kc.key_concepts.forEach(c => parts.push(`  • ${typeof c === "string" ? c : c.concept ?? JSON.stringify(c)}`));
-      }
-      if (Array.isArray(kc.main_topics) && kc.main_topics.length) {
-        parts.push("\n\n📌 Main Topics:");
-        kc.main_topics.forEach(t => parts.push(`  • ${typeof t === "string" ? t : t.topic ?? JSON.stringify(t)}`));
-      }
-      if (kc.conclusion) parts.push(`\n\n✅ Conclusion:\n${kc.conclusion}`);
-      return parts.join("\n") || JSON.stringify(kc, null, 2);
-    }
-    // Fallback — pretty-print JSON
-    return JSON.stringify(data, null, 2);
-  }
+  const toggle = (idx) => setRevealed(prev => ({ ...prev, [idx]: !prev[idx] }));
 
-  // Quiz — array of questions
-  if (tab === "mcq" || tab === "essay") {
-    const questions = data.questions ?? data.quiz ?? (Array.isArray(data) ? data : null);
-    if (Array.isArray(questions) && questions.length) {
-      return questions.map((q, i) => {
-        const lines = [`Q${i + 1}. ${q.question ?? q.text ?? q}`];
-        if (Array.isArray(q.options)) {
-          q.options.forEach((opt, oi) => {
-            const letter = ["A", "B", "C", "D"][oi] ?? oi + 1;
-            lines.push(`   ${letter}) ${opt}`);
-          });
-        }
-        if (q.correct_answer !== undefined) lines.push(`   ✅ Answer: ${q.correct_answer}`);
-        if (q.explanation)                  lines.push(`   💡 ${q.explanation}`);
-        return lines.join("\n");
-      }).join("\n\n");
-    }
-    return JSON.stringify(data, null, 2);
-  }
+  const LETTERS = ["A", "B", "C", "D", "E", "F"];
 
-  // Generic fallback
-  if (data.message) return data.message;
-  return JSON.stringify(data, null, 2);
+  return (
+    <div className="flex flex-col gap-5 w-full">
+      {questions.map((q, qi) => {
+        const isRevealed = !!revealed[qi];
+        const selectedIdx = selected[qi] ?? null;
+
+        return (
+          <div key={qi} className="flex flex-col gap-3">
+            {/* Question header */}
+            <div className="flex items-start gap-2">
+              <span className="flex-shrink-0 w-6 h-6 rounded-lg bg-indigo-100 dark:bg-indigo-500/25 text-indigo-700 dark:text-indigo-300 text-[11px] font-black flex items-center justify-center">
+                {qi + 1}
+              </span>
+              <p className="text-[13px] sm:text-[14px] font-semibold text-slate-900 dark:text-gray-100 leading-snug">
+                {q.question}
+              </p>
+            </div>
+
+            {/* Options */}
+            {q.options.length > 0 && (
+              <div className="flex flex-col gap-1.5 ml-8">
+                {q.options.map((opt, oi) => {
+                  const letter = LETTERS[oi] ?? String(oi + 1);
+                  // Determine colour when revealed
+                  let optCls = "bg-slate-50 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-300";
+                  if (isRevealed && q.correct) {
+                    const correctLower = q.correct.toLowerCase();
+                    const isCorrect =
+                      correctLower === letter.toLowerCase() ||
+                      opt.toLowerCase().includes(correctLower) ||
+                      correctLower.includes(opt.toLowerCase().slice(0, 8));
+                    if (isCorrect) {
+                      optCls = "bg-emerald-50 dark:bg-emerald-500/15 border-emerald-400 dark:border-emerald-500/50 text-emerald-800 dark:text-emerald-300";
+                    } else if (selectedIdx === oi) {
+                      optCls = "bg-red-50 dark:bg-red-500/12 border-red-400 dark:border-red-500/50 text-red-700 dark:text-red-300";
+                    }
+                  } else if (selectedIdx === oi) {
+                    optCls = "bg-indigo-50 dark:bg-indigo-500/15 border-indigo-400 dark:border-indigo-500/50 text-indigo-800 dark:text-indigo-200";
+                  }
+
+                  return (
+                    <button key={oi}
+                      onClick={() => !isRevealed && setSelected(prev => ({ ...prev, [qi]: oi }))}
+                      className={`w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-xl border text-[12px] sm:text-[13px] font-medium transition-all cursor-pointer ${optCls} ${isRevealed ? "cursor-default" : "hover:border-indigo-300 dark:hover:border-indigo-500/40"}`}>
+                      <span className="flex-shrink-0 w-5 h-5 rounded-md border border-current flex items-center justify-center text-[10px] font-black opacity-70">
+                        {letter}
+                      </span>
+                      <span className="leading-snug">{opt}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Reveal / Answer row */}
+            <div className="ml-8 flex flex-col gap-1.5">
+              <button
+                onClick={() => toggle(qi)}
+                className="self-start inline-flex items-center gap-1.5 text-[11px] sm:text-[12px] font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer border-0 bg-transparent p-0 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors">
+                <CheckCircle size={12} />
+                {isRevealed ? "Hide Answer" : "Show Answer"}
+              </button>
+
+              <AnimatePresence>
+                {isRevealed && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="flex flex-col gap-1 overflow-hidden">
+                    {q.correct && (
+                      <p className="text-[12px] font-bold text-emerald-700 dark:text-emerald-400">
+                        ✅ Correct: {q.correct}
+                      </p>
+                    )}
+                    {q.explanation && (
+                      <p className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                        💡 {q.explanation}
+                      </p>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Divider between questions */}
+            {qi < questions.length - 1 && (
+              <div className="border-t border-slate-100 dark:border-white/6 mt-1" />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   INNER CHAT COMPONENT  (needs useSearchParams → must be in Suspense)
+/* ══════════════════════════════════════════════════════════════════════
+   INNER CHAT COMPONENT  (useSearchParams → must be inside Suspense)
 ══════════════════════════════════════════════════════════════════════ */
 function ChatContent() {
-  const router             = useRouter();
-  const params             = useSearchParams();
-  const { logout }         = useAuth();
+  const router = useRouter();
+  const params = useSearchParams();
+  const { logout } = useAuth();
   const { dark, toggleTheme } = useTheme();
-  const streamRef          = useRef(null);
+  const streamRef = useRef(null);
 
-  /* ── URL params ─────────────────────────────────────────────────── */
-  const subjectId  = params.get("subject")  || "";
-  const lectureId  = params.get("lecture")  || "";
-  const backPath   = subjectId ? `/subjects/${subjectId}` : "/subjects";
+  /* URL params */
+  const subjectId = params.get("subject") || "";
+  const lectureId = params.get("lecture") || "";
+  const backPath = subjectId ? `/subjects/${subjectId}` : "/subjects";
 
-  /* ── State ──────────────────────────────────────────────────────── */
+  /* State */
   const [lectureTitle, setLectureTitle] = useState(params.get("name") || "");
-  const [lectureReady, setLectureReady] = useState(false); // true after lecture loaded
-  const [activeTab,    setActiveTab]    = useState("chat");
-  const [input,        setInput]        = useState("");
-  const [sending,      setSending]      = useState(false);
-  const [tabLoading,   setTabLoading]   = useState(false); // for summary/quiz auto-load
-  const [tabError,     setTabError]     = useState("");
+  const [lectureReady, setLectureReady] = useState(false);
+  const [activeTab, setActiveTab] = useState("chat");
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [tabLoading, setTabLoading] = useState(false);
+  const [tabError, setTabError] = useState("");
 
-  /* chat history kept as { role, content } for the API */
+  /* History for the backend (role/content pairs) */
   const [history, setHistory] = useState([]);
-  /* display messages kept separately */
+
+  /* Messages for display — each has: { id, role, type, payload, time }
+     type: "text" | "quiz" | "summary"
+     payload: string (text/summary) | QuizQuestion[] (quiz)          */
   const [messages, setMessages] = useState([{
-    id:   "m0",
+    id: "m0",
     role: "assistant",
-    text: "Hello! I'm your AI assistant for this lecture. Switch tabs to get a summary, quiz, or ask me anything.",
+    type: "text",
+    payload: "Hello! I'm your AI assistant. Switch tabs to get a summary, quiz, or just ask me anything about this lecture.",
     time: ts(),
   }]);
 
-  /* ── Load lecture details once ──────────────────────────────────── */
+  /* Load lecture title from API on mount */
   useEffect(() => {
     if (!lectureId) return;
     (async () => {
       try {
         const lec = await apiGetLecture(lectureId);
-        setLectureTitle(lec.title ?? lec.name ?? lectureTitle);
-      } catch { /* keep URL name if API fails */ }
+        setLectureTitle(lec.title ?? lec.name ?? "");
+      } catch { /* keep URL param fallback */ }
       finally { setLectureReady(true); }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lectureId]);
 
-  /* ── Auto-scroll to bottom ──────────────────────────────────────── */
+  /* Auto-scroll */
   useEffect(() => {
     const el = streamRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, sending, tabLoading]);
 
-  /* ── Add a display message ──────────────────────────────────────── */
-  const addMsg = useCallback((role, text) => {
-    setMessages(prev => [...prev, { id: `${role}-${Date.now()}`, role, text, time: ts() }]);
+  /* Add a message */
+  const addMsg = useCallback((role, type, payload) => {
+    setMessages(prev => [
+      ...prev,
+      { id: `${role}-${Date.now()}`, role, type, payload, time: ts() },
+    ]);
   }, []);
 
-  /* ── Tab definitions ────────────────────────────────────────────── */
+  /* Tabs */
   const tabs = [
-    { id: "chat",    icon: <Sparkles   size={14} />, label: "Chat",           shortLabel: "Chat"    },
-    { id: "explain", icon: <BookOpen   size={14} />, label: "Explain",        shortLabel: "Explain" },
-    { id: "summary", icon: <FileText   size={14} />, label: "Summary",        shortLabel: "Summary" },
-    { id: "mcq",     icon: <HelpCircle size={14} />, label: "MCQ Quiz",       shortLabel: "MCQ"     },
+    { id: "chat", icon: <Sparkles size={14} />, label: "Chat", shortLabel: "Chat" },
+    { id: "explain", icon: <BookOpen size={14} />, label: "Explain", shortLabel: "Explain" },
+    { id: "summary", icon: <FileText size={14} />, label: "Summary", shortLabel: "Summary" },
+    { id: "mcq", icon: <HelpCircle size={14} />, label: "MCQ Quiz", shortLabel: "MCQ" },
   ];
 
-  const tabLabel = useMemo(() =>
-    tabs.find(t => t.id === activeTab)?.label ?? "Chat"
-  , [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tabLabel = useMemo(
+    () => tabs.find(t => t.id === activeTab)?.label ?? "Chat",
+    [activeTab] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
-  /* ── Suggested prompts per tab ──────────────────────────────────── */
   const suggested = useMemo(() => ({
-    chat:    "What are the most important concepts in this lecture?",
+    chat: "What are the most important concepts in this lecture?",
     explain: "Explain the core concepts of this lecture in simple terms.",
-    summary: "Give me a structured summary of this lecture.",
-    mcq:     "Generate 5 multiple choice questions from this lecture.",
+    summary: "Summarise this lecture for me.",
+    mcq: "Generate a multiple choice quiz from this lecture.",
   }[activeTab]), [activeTab]);
 
-  /* ── Handle tab switching — auto-fetch for summary & mcq ────────── */
+  /* Tab switch — auto-fetch for summary & mcq */
   const handleTabChange = useCallback(async (tabId) => {
     setActiveTab(tabId);
     setTabError("");
-
     if (!lectureId) return;
     if (tabId !== "summary" && tabId !== "mcq") return;
 
     setTabLoading(true);
     try {
-      let data;
       if (tabId === "summary") {
-        data = await apiGetSummary(lectureId);
+        const data = await apiGetSummary(lectureId);
+        const text = parseSummaryData(data);
+        addMsg("assistant", "summary", text);
       } else {
-        data = await apiGenerateQuiz(lectureId);
+        const data = await apiGenerateQuiz(lectureId);
+        const questions = parseQuizData(data);
+        if (questions) {
+          addMsg("assistant", "quiz", questions);
+        } else {
+          // Fallback: couldn't parse as quiz → show raw text
+          addMsg("assistant", "text", parseChatData(data));
+        }
       }
-      const text = formatResponse(data, tabId);
-      addMsg("assistant", text);
     } catch (err) {
       setTabError(err.message || "Failed to load. Please try again.");
     } finally {
@@ -184,44 +413,33 @@ function ChatContent() {
     }
   }, [lectureId, addMsg]);
 
-  /* ── Send a message ─────────────────────────────────────────────── */
+  /* Send message */
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || sending || tabLoading) return;
     setInput("");
     setTabError("");
-    addMsg("user", text);
+    addMsg("user", "text", text);
     setSending(true);
 
-    // Build new history entry
-    const newHistory = [...history, { role: "user", content: text }];
+    const userHistory = [...history, { role: "user", content: text }];
 
     try {
       let data;
-
       if (activeTab === "explain") {
-        // POST /ai/explain  — concept + lecture_id
         data = await apiExplain({ concept: text, lecture_id: lectureId });
-      } else if (activeTab === "summary") {
-        // Summary is auto-loaded; if user types anyway, treat as chat
-        data = await apiChat({ message: text, lecture_id: lectureId, history });
-      } else if (activeTab === "mcq") {
-        // MCQ is auto-loaded; if user types a follow-up, route to chat
-        data = await apiChat({ message: text, lecture_id: lectureId, history });
       } else {
-        // "chat" tab — full conversational chat with history
+        // chat / summary / mcq — all route to chat for follow-up messages
         data = await apiChat({ message: text, lecture_id: lectureId, history });
       }
 
-      const reply = formatResponse(data, activeTab);
-      addMsg("assistant", reply);
-
-      // Update history with both sides
-      setHistory([...newHistory, { role: "assistant", content: reply }]);
+      const reply = parseChatData(data);
+      addMsg("assistant", "text", reply);
+      setHistory([...userHistory, { role: "assistant", content: reply }]);
     } catch (err) {
-      const errMsg = err.message || "Something went wrong. Please try again.";
-      addMsg("assistant", `⚠️ ${errMsg}`);
-      setTabError(errMsg);
+      const msg = err.message || "Something went wrong. Please try again.";
+      addMsg("assistant", "text", `⚠️ ${msg}`);
+      setTabError(msg);
     } finally {
       setSending(false);
     }
@@ -231,7 +449,6 @@ function ChatContent() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   };
 
-  /* ── Styles ─────────────────────────────────────────────────────── */
   const iconBtn = [
     "w-8 h-8 sm:w-9 sm:h-9 rounded-xl grid place-items-center cursor-pointer tc flex-shrink-0",
     "bg-white dark:bg-white/8",
@@ -240,7 +457,7 @@ function ChatContent() {
     "hover:text-slate-900 dark:hover:text-white shadow-sm",
   ].join(" ");
 
-  /* ── Guard — no lectureId ───────────────────────────────────────── */
+  /* Guard — no lectureId */
   if (!lectureId) {
     return (
       <div className="flex flex-col items-center justify-center h-screen gap-4 bg-slate-50 dark:bg-[#070b16] text-slate-500 dark:text-slate-400">
@@ -257,10 +474,9 @@ function ChatContent() {
   return (
     <div className="flex flex-col h-screen h-dvh overflow-hidden tc bg-slate-50 dark:bg-[#070b16] text-slate-900 dark:text-gray-100">
 
-      {/* ── TOP BAR ─────────────────────────────────────────────────── */}
+      {/* ── HEADER ────────────────────────────────────────────────── */}
       <header className="flex-shrink-0 tc bg-white/95 dark:bg-[#070b16]/92 backdrop-blur-xl border-b border-slate-200 dark:border-white/8 shadow-sm dark:shadow-none">
 
-        {/* Title row */}
         <div className="max-w-[1100px] mx-auto px-3 sm:px-5 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-3">
           <motion.button whileHover={{ x: -2 }} whileTap={{ scale: 0.90 }}
             onClick={() => router.push(backPath)} title="Back" className={iconBtn}>
@@ -272,10 +488,10 @@ function ChatContent() {
               {lectureTitle || (lectureReady ? "Lecture" : "Loading…")}
             </div>
             <div className="text-[11px] sm:text-[12px] mt-0.5 text-slate-400 dark:text-gray-500 tc">
-              {activeTab === "chat"    && "Conversational AI tutor"}
+              {activeTab === "chat" && "Conversational AI tutor"}
               {activeTab === "explain" && "Concept explanation mode"}
               {activeTab === "summary" && "Lecture knowledge card"}
-              {activeTab === "mcq"     && "Auto-generated quiz"}
+              {activeTab === "mcq" && "Auto-generated quiz"}
             </div>
           </div>
 
@@ -284,8 +500,8 @@ function ChatContent() {
               <AnimatePresence mode="wait" initial={false}>
                 <motion.span key={dark ? "sun" : "moon"}
                   initial={{ rotate: -35, opacity: 0, scale: 0.75 }}
-                  animate={{ rotate: 0,  opacity: 1, scale: 1    }}
-                  exit={{   rotate:  35, opacity: 0, scale: 0.75 }}
+                  animate={{ rotate: 0, opacity: 1, scale: 1 }}
+                  exit={{ rotate: 35, opacity: 0, scale: 0.75 }}
                   transition={{ duration: 0.18 }}
                   className="flex items-center justify-center">
                   {dark ? <Sun size={15} /> : <Moon size={15} />}
@@ -299,7 +515,7 @@ function ChatContent() {
           </div>
         </div>
 
-        {/* Tabs row */}
+        {/* Tabs */}
         <div className="max-w-[1100px] mx-auto px-3 sm:px-5 pb-2.5 sm:pb-3 flex gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none">
           {tabs.map(t => (
             <motion.button key={t.id} whileHover={{ y: -1 }} whileTap={{ scale: 0.96 }}
@@ -320,7 +536,7 @@ function ChatContent() {
         </div>
       </header>
 
-      {/* ── MESSAGES ────────────────────────────────────────────────── */}
+      {/* ── MESSAGES ─────────────────────────────────────────────── */}
       <div ref={streamRef} className="flex-1 overflow-y-auto">
         <div className="max-w-[860px] mx-auto px-3 sm:px-5 py-4 sm:py-6 flex flex-col gap-4 sm:gap-5">
 
@@ -332,7 +548,8 @@ function ChatContent() {
                 className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-red-50 dark:bg-red-500/12 border border-red-200 dark:border-red-500/25 text-red-600 dark:text-red-400 text-[13px] font-semibold">
                 <AlertCircle size={15} className="flex-shrink-0" />
                 <span className="flex-1">{tabError}</span>
-                <button onClick={() => setTabError("")} className="border-0 bg-transparent cursor-pointer text-red-400 hover:text-red-600 p-0">
+                <button onClick={() => setTabError("")}
+                  className="border-0 bg-transparent cursor-pointer text-red-400 hover:text-red-600 p-0">
                   <RefreshCw size={13} />
                 </button>
               </motion.div>
@@ -341,42 +558,62 @@ function ChatContent() {
 
           {/* Message bubbles */}
           <AnimatePresence initial={false}>
-            {messages.map(m => (
-              <motion.div key={m.id}
-                initial={{ opacity: 0, y: 16, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0,  scale: 1    }}
-                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                className={`flex items-end gap-2 sm:gap-3 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+            {messages.map(m => {
+              const isUser = m.role === "user";
+              const isQuiz = m.type === "quiz" && Array.isArray(m.payload);
 
-                {m.role === "assistant" && (
-                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex-shrink-0 grid place-items-center text-[13px] tc bg-indigo-100 dark:bg-indigo-500/20 border border-indigo-200 dark:border-indigo-500/30 shadow-sm">
-                    🧠
-                  </div>
-                )}
+              return (
+                <motion.div key={m.id}
+                  initial={{ opacity: 0, y: 16, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                  className={`flex items-end gap-2 sm:gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
 
-                <div className={[
-                  "max-w-[75vw] sm:max-w-[min(660px,78vw)] rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3",
-                  "text-[13px] sm:text-[14px] leading-[1.65]",
-                  m.role === "user"
-                    ? "bg-[#6d5efc] text-white shadow-[0_6px_24px_rgba(109,94,252,0.30)] rounded-br-sm"
-                    : "bg-white dark:bg-[#0f172a] border border-slate-200 dark:border-white/8 text-slate-800 dark:text-gray-200 shadow-[0_2px_12px_rgba(0,0,0,0.06)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.40)] rounded-bl-sm tc",
-                ].join(" ")}>
-                  <div className="whitespace-pre-wrap">{m.text}</div>
-                  <div className={`mt-1.5 sm:mt-2 text-[10px] sm:text-[11px] ${m.role === "user" ? "text-white/60" : "text-slate-400 dark:text-gray-600 tc"}`}>
-                    {m.time}
-                  </div>
-                </div>
+                  {/* Brain avatar — assistant only */}
+                  {!isUser && (
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex-shrink-0 grid place-items-center text-[13px] tc bg-indigo-100 dark:bg-indigo-500/20 border border-indigo-200 dark:border-indigo-500/30 shadow-sm self-start mt-0.5">
+                      🧠
+                    </div>
+                  )}
 
-                {m.role === "user" && (
-                  <div className="text-[11px] sm:text-[12px] flex-shrink-0 text-slate-400 dark:text-gray-500 tc self-end mb-1">
-                    You
+                  {/* Bubble */}
+                  <div className={[
+                    isUser
+                      ? "max-w-[75vw] sm:max-w-[min(560px,72vw)]"
+                      : isQuiz
+                        ? "w-full max-w-[min(760px,92vw)]"   // quiz gets wider bubble
+                        : "max-w-[75vw] sm:max-w-[min(660px,78vw)]",
+                    "rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3",
+                    "text-[13px] sm:text-[14px] leading-[1.65]",
+                    isUser
+                      ? "bg-[#6d5efc] text-white shadow-[0_6px_24px_rgba(109,94,252,0.30)] rounded-br-sm"
+                      : "bg-white dark:bg-[#0f172a] border border-slate-200 dark:border-white/8 text-slate-800 dark:text-gray-200 shadow-[0_2px_12px_rgba(0,0,0,0.06)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.40)] rounded-bl-sm tc",
+                  ].join(" ")}>
+
+                    {/* Content */}
+                    {isQuiz
+                      ? <QuizMessage questions={m.payload} />
+                      : <div className="whitespace-pre-wrap">{m.payload}</div>
+                    }
+
+                    {/* Timestamp */}
+                    <div className={`mt-1.5 sm:mt-2 text-[10px] sm:text-[11px] ${isUser ? "text-white/60" : "text-slate-400 dark:text-gray-600 tc"}`}>
+                      {m.time}
+                    </div>
                   </div>
-                )}
-              </motion.div>
-            ))}
+
+                  {/* "You" label — user only */}
+                  {isUser && (
+                    <div className="text-[11px] sm:text-[12px] flex-shrink-0 text-slate-400 dark:text-gray-500 tc self-end mb-1">
+                      You
+                    </div>
+                  )}
+                </motion.div>
+              );
+            })}
           </AnimatePresence>
 
-          {/* Typing / loading indicator */}
+          {/* Typing indicator */}
           <AnimatePresence>
             {(sending || tabLoading) && (
               <motion.div
@@ -402,7 +639,7 @@ function ChatContent() {
         </div>
       </div>
 
-      {/* ── COMPOSER ────────────────────────────────────────────────── */}
+      {/* ── COMPOSER ─────────────────────────────────────────────── */}
       <div className="flex-shrink-0 tc border-t border-slate-200 dark:border-white/8 bg-white dark:bg-[#070b16]">
         <div className="max-w-[860px] mx-auto px-3 sm:px-5 py-3 sm:py-4">
 
@@ -450,8 +687,8 @@ function ChatContent() {
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   PAGE SHELL  — static, wraps ChatContent in <Suspense>
+/* ══════════════════════════════════════════════════════════════════════
+   PAGE SHELL — wraps ChatContent in Suspense (useSearchParams requirement)
 ══════════════════════════════════════════════════════════════════════ */
 function ChatPageInner() {
   return (
