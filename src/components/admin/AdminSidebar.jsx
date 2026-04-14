@@ -16,14 +16,14 @@ import {
 import { useTheme } from "@/context/AppContext";
 
 const NAV = [
-  { label: "Dashboard",              href: "/admin",              icon: FaChartBar  },
-  { label: "Students",               href: "/admin/students",     icon: FaUsers     },
-  { label: "Analytics",              href: "/admin/analytics",    icon: FaChartLine },
-  { label: "Presentation Generator", href: "/admin/presentation", icon: FaMagic     },
+  { label: "Dashboard", href: "/admin", icon: FaChartBar },
+  { label: "Students", href: "/admin/students", icon: FaUsers },
+  { label: "Analytics", href: "/admin/analytics", icon: FaChartLine },
+  { label: "Presentation Generator", href: "/admin/presentation", icon: FaMagic },
 ];
 
 function SidebarContent({ onClose }) {
-  const pathname  = usePathname();
+  const pathname = usePathname();
   const { dark, toggleTheme } = useTheme();
 
   const isActive = (href) =>
@@ -69,11 +69,10 @@ function SidebarContent({ onClose }) {
                 }
               `}
             >
-              <Icon className={`text-[15px] flex-shrink-0 ${
-                active
+              <Icon className={`text-[15px] flex-shrink-0 ${active
                   ? "text-indigo-600 dark:text-indigo-400"
                   : "text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-300"
-              }`} />
+                }`} />
               <span className="leading-tight">{label}</span>
             </Link>
           );

@@ -15,13 +15,11 @@ const stagger = {
   show:   { transition: { staggerChildren: 0.1, delayChildren: 0.05 } },
 };
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   Inner component — contains useSearchParams(), must be inside <Suspense>
-───────────────────────────────────────────────────────────────────────────── */
+/* ── Inner form — uses useSearchParams so must be inside <Suspense> ── */
 function LoginForm() {
   const { login, loading } = useAuth();
   const router  = useRouter();
-  const params  = useSearchParams();          // ← only called inside Suspense
+  const params  = useSearchParams();
 
   const [email, setEmail] = useState("");
   const [pass,  setPass]  = useState("");
@@ -33,7 +31,15 @@ function LoginForm() {
     if (!email.trim()) return setErr("Enter your email");
     if (!pass.trim())  return setErr("Enter your password");
     try {
-      await login({ email: email.trim(), password: pass });
+      const { user } = await login({ email: email.trim(), password: pass });
+
+      // ── Admin email → redirect to admin dashboard ──────────────────
+      if (user?.isAdmin) {
+        router.push("/admin");
+        return;
+      }
+
+      // ── Regular user → respect ?next= param or default ────────────
       router.push(params.get("next") || "/subjects");
     } catch (e2) {
       setErr(e2?.message || "Login failed. Please check your credentials.");
@@ -153,7 +159,7 @@ function LoginForm() {
           </motion.button>
         </div>
 
-        {/* Card footer */}
+        {/* Footer */}
         <div className="px-5 sm:px-6 py-3.5 sm:py-4 border-t text-center text-[12px]
                         border-slate-100 text-slate-400
                         dark:border-white/[0.07] dark:text-gray-500">
@@ -177,15 +183,10 @@ function LoginForm() {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   Page shell — static, wraps LoginForm in <Suspense>
-   Next.js requires any component calling useSearchParams() to be inside
-   a Suspense boundary so the page can be statically prerendered.
-───────────────────────────────────────────────────────────────────────────── */
+/* ── Page shell ───────────────────────────────────────────────────── */
 export default function LoginPage() {
   return (
     <div className="min-h-screen min-h-dvh flex items-center justify-center px-4 sm:px-5 py-10 sm:py-12 relative overflow-hidden bg-slate-100 dark:bg-[#050a1a]">
-      {/* Background glows */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2
                         w-[400px] sm:w-[700px] h-[350px] sm:h-[500px] rounded-full blur-[80px]
@@ -194,8 +195,6 @@ export default function LoginPage() {
                         w-[280px] sm:w-[400px] h-[220px] sm:h-[300px] rounded-full blur-[60px]
                         bg-purple-400/[0.08] dark:bg-purple-600/[0.09]" />
       </div>
-
-      {/* LoginForm is the only part that needs useSearchParams */}
       <Suspense fallback={
         <div className="w-full max-w-[400px] flex items-center justify-center py-20">
           <span className="w-7 h-7 rounded-full border-2 border-indigo-500/30 border-t-indigo-500 animate-spin" />

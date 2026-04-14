@@ -2,9 +2,11 @@
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Moon, Sun, Brain, BookOpen, FileText, HelpCircle, LogOut, LayoutDashboard } from "lucide-react";
-import { useAuth } from "@/context/AppContext";
-import { useTheme } from "@/context/AppContext";
+import {
+  Moon, Sun, Brain, BookOpen, FileText,
+  HelpCircle, LogOut, LayoutDashboard,
+} from "lucide-react";
+import { useAuth, useTheme } from "@/context/AppContext";
 
 const fadeUp = { hidden: { opacity: 0, y: 28 }, show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] } } };
 const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.11, delayChildren: 0.05 } } };
@@ -14,9 +16,10 @@ export default function HomePage() {
   const { user, logout } = useAuth();
   const { dark, toggleTheme } = useTheme();
 
-  const go = (path) => router.push(path);
-
-  const onGetStarted = () => user ? router.push("/subjects") : router.push("/signup?next=/subjects");
+  /* ── Role-aware destinations ──────────────────────────────────── */
+  const isAdmin      = user?.isAdmin ?? false;
+  const dashboardPath = isAdmin ? "/admin" : "/subjects";
+  const dashboardLabel = isAdmin ? "Dashboard" : "My Subjects";
 
   const features = useMemo(() => [
     {
@@ -47,25 +50,32 @@ export default function HomePage() {
   return (
     <div className="min-h-screen tc bg-white dark:bg-[#0b1020] text-slate-900 dark:text-gray-200">
 
-      {/* ── NAV ── */}
+      {/* ── NAV ─────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-50 tc bg-white/90 dark:bg-[#0b1020]/90 backdrop-blur-xl border-b border-slate-200 dark:border-white/10 shadow-sm dark:shadow-none">
         <div className={`${C} flex items-center justify-between gap-2 py-3`}>
-          <button className="flex items-center gap-2 cursor-pointer select-none bg-transparent border-0 p-0 flex-shrink-0"
+
+          {/* Brand */}
+          <button
+            className="flex items-center gap-2 cursor-pointer select-none bg-transparent border-0 p-0 flex-shrink-0"
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
             <span className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center tc bg-indigo-50 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 shadow-[0_4px_14px_rgba(99,102,241,0.18)]">
               <Brain size={18} />
             </span>
-            <span className="font-black text-[15px] sm:text-[18px] tracking-tight tc text-slate-900 dark:text-gray-100">Lecture Brain</span>
+            <span className="font-black text-[15px] sm:text-[18px] tracking-tight tc text-slate-900 dark:text-gray-100">
+              Lecture Brain
+            </span>
           </button>
 
+          {/* Nav actions */}
           <div className="flex items-center gap-1.5">
-            <motion.button whileTap={{ scale: 0.88 }} onClick={toggleTheme} aria-label="Toggle dark mode"
+            {/* Theme toggle */}
+            <motion.button whileTap={{ scale: 0.88 }} onClick={toggleTheme}
               className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center cursor-pointer tc bg-white dark:bg-white/8 border border-slate-200 dark:border-white/12 text-slate-600 dark:text-gray-300 shadow-sm flex-shrink-0">
               <AnimatePresence mode="wait" initial={false}>
                 <motion.span key={dark ? "sun" : "moon"}
                   initial={{ rotate: -40, opacity: 0, scale: 0.7 }}
-                  animate={{ rotate: 0, opacity: 1, scale: 1 }}
-                  exit={{ rotate: 40, opacity: 0, scale: 0.7 }}
+                  animate={{ rotate: 0,  opacity: 1, scale: 1   }}
+                  exit={{   rotate:  40, opacity: 0, scale: 0.7 }}
                   transition={{ duration: 0.18 }}
                   className="flex items-center justify-center">
                   {dark ? <Sun size={15} /> : <Moon size={15} />}
@@ -74,22 +84,34 @@ export default function HomePage() {
             </motion.button>
 
             {user ? (
+              /* ── Logged-in state ── */
               <>
-                <button onClick={() => go("/subjects")}
-                  className="p-2 sm:px-3 sm:py-1.5 rounded-lg text-[13px] font-semibold border-0 bg-transparent cursor-pointer tc text-slate-600 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-white/8 hover:text-slate-900 dark:hover:text-white transition-colors">
-                  <span className="hidden sm:block">Dashboard</span>
-                  <LayoutDashboard size={16} className="sm:hidden" />
-                </button>
+                <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.95 }}
+                  onClick={() => router.push(dashboardPath)}
+                  className="flex items-center gap-1.5 h-8 sm:h-9 px-3 sm:px-4 rounded-xl text-[12px] sm:text-[13px] font-bold cursor-pointer border-0
+                             tc bg-indigo-600 hover:bg-indigo-700 text-white shadow-[0_2px_10px_rgba(99,102,241,0.28)] transition-colors flex-shrink-0">
+                  <LayoutDashboard size={14} />
+                  <span className="hidden sm:block">{dashboardLabel}</span>
+                </motion.button>
+
                 <motion.button whileTap={{ scale: 0.95 }} onClick={logout}
-                  className="p-2 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl text-[13px] font-bold cursor-pointer border-0 tc bg-slate-900 dark:bg-gray-100 text-white dark:text-slate-900 shadow-[0_2px_10px_rgba(0,0,0,0.15)] flex-shrink-0">
-                  <span className="hidden sm:block">Logout</span>
-                  <LogOut size={16} className="sm:hidden" />
+                  className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center cursor-pointer tc
+                             bg-white dark:bg-white/8 border border-slate-200 dark:border-white/12
+                             text-slate-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400
+                             shadow-sm flex-shrink-0 transition-colors">
+                  <LogOut size={15} />
                 </motion.button>
               </>
             ) : (
-              <motion.button whileTap={{ scale: 0.95 }} whileHover={{ y: -1 }} onClick={() => go("/login")}
-                className="h-8 sm:h-9 px-3 sm:px-5 rounded-xl text-[12px] sm:text-[13px] font-bold cursor-pointer tc bg-transparent text-slate-700 dark:text-gray-300 border border-slate-200 dark:border-white/15 hover:bg-slate-50 dark:hover:bg-white/6 hover:border-slate-300 dark:hover:border-white/25 transition-colors flex-shrink-0">
-                Login
+              /* ── Logged-out state ── */
+              <motion.button whileTap={{ scale: 0.95 }} whileHover={{ y: -1 }}
+                onClick={() => router.push("/login")}
+                className="h-8 sm:h-9 px-3 sm:px-5 rounded-xl text-[12px] sm:text-[13px] font-bold cursor-pointer tc
+                           bg-transparent text-slate-700 dark:text-gray-300
+                           border border-slate-200 dark:border-white/15
+                           hover:bg-slate-50 dark:hover:bg-white/6 hover:border-slate-300 dark:hover:border-white/25
+                           transition-colors flex-shrink-0">
+                Sign In
               </motion.button>
             )}
           </div>
@@ -97,7 +119,7 @@ export default function HomePage() {
       </header>
 
       <main>
-        {/* ── HERO ── */}
+        {/* ── HERO ────────────────────────────────────────────────── */}
         <section className="relative pt-12 sm:pt-20 pb-10 sm:pb-14 overflow-hidden">
           <div className="pointer-events-none absolute inset-0">
             <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] sm:w-[900px] h-[400px] sm:h-[500px] rounded-full blur-3xl bg-indigo-500/[0.07] dark:bg-indigo-500/[0.13]" />
@@ -105,6 +127,7 @@ export default function HomePage() {
           </div>
 
           <motion.div className={`${C} relative text-center`} variants={stagger} initial="hidden" animate="show">
+            {/* Badge */}
             <motion.div variants={fadeUp}
               className="inline-flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-full mb-5 sm:mb-6 tc bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 font-extrabold text-[10px] sm:text-[11px] tracking-wide border border-indigo-200 dark:border-indigo-500/30">
               <motion.span animate={{ scale: [1, 1.35, 1] }} transition={{ duration: 2.2, repeat: Infinity }}
@@ -126,26 +149,56 @@ export default function HomePage() {
               Get explanations, summaries, and quiz questions powered by AI.
             </motion.p>
 
+            {/* ── CTA Buttons — role-aware ────────────────────────── */}
             <motion.div variants={fadeUp} className="flex justify-center gap-3 flex-wrap mb-10 sm:mb-12">
-              <motion.button whileHover={{ y: -2, boxShadow: "0 12px 28px rgba(79,70,229,0.40)" }} whileTap={{ scale: 0.96 }}
-                onClick={onGetStarted}
-                className="h-10 sm:h-11 px-5 sm:px-7 rounded-xl font-bold text-[13px] sm:text-[14px] cursor-pointer border-0 bg-indigo-600 hover:bg-indigo-700 text-white shadow-[0_4px_18px_rgba(79,70,229,0.28)] transition-colors">
-                Get Started Free
-              </motion.button>
-              <motion.button whileHover={{ y: -2 }} whileTap={{ scale: 0.96 }} onClick={() => go("/login")}
-                className="h-10 sm:h-11 px-5 sm:px-7 rounded-xl font-bold text-[13px] sm:text-[14px] cursor-pointer tc bg-transparent text-slate-700 dark:text-gray-300 border border-slate-200 dark:border-white/15 hover:bg-slate-50 dark:hover:bg-white/6 transition-colors">
-                Sign In
-              </motion.button>
+              {user ? (
+                /* Logged-in — show one role-aware button */
+                <motion.button
+                  whileHover={{ y: -2, boxShadow: "0 12px 28px rgba(79,70,229,0.40)" }}
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => router.push(dashboardPath)}
+                  className="h-10 sm:h-11 px-5 sm:px-7 rounded-xl font-bold text-[13px] sm:text-[14px] cursor-pointer border-0
+                             bg-indigo-600 hover:bg-indigo-700 text-white
+                             shadow-[0_4px_18px_rgba(79,70,229,0.28)] transition-colors inline-flex items-center gap-2">
+                  <LayoutDashboard size={16} />
+                  {isAdmin ? "Go to Dashboard" : "My Subjects"}
+                </motion.button>
+              ) : (
+                /* Logged-out — Get Started + Sign In */
+                <>
+                  <motion.button
+                    whileHover={{ y: -2, boxShadow: "0 12px 28px rgba(79,70,229,0.40)" }}
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => router.push("/signup")}
+                    className="h-10 sm:h-11 px-5 sm:px-7 rounded-xl font-bold text-[13px] sm:text-[14px] cursor-pointer border-0
+                               bg-indigo-600 hover:bg-indigo-700 text-white
+                               shadow-[0_4px_18px_rgba(79,70,229,0.28)] transition-colors">
+                    Get Started Free
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ y: -2 }} whileTap={{ scale: 0.96 }}
+                    onClick={() => router.push("/login")}
+                    className="h-10 sm:h-11 px-5 sm:px-7 rounded-xl font-bold text-[13px] sm:text-[14px] cursor-pointer tc
+                               bg-transparent text-slate-700 dark:text-gray-300
+                               border border-slate-200 dark:border-white/15
+                               hover:bg-slate-50 dark:hover:bg-white/6 transition-colors">
+                    Sign In
+                  </motion.button>
+                </>
+              )}
             </motion.div>
 
-            {/* illustration */}
+            {/* Illustration */}
             <motion.div variants={fadeUp} className="flex justify-center" aria-hidden="true">
               <motion.div
-                initial={{ opacity: 0, y: 24, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+                initial={{ opacity: 0, y: 24, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0,  scale: 1    }}
                 transition={{ delay: 0.4, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
                 className="w-full max-w-[560px] h-[160px] sm:h-[190px] rounded-2xl tc border border-indigo-200/60 dark:border-indigo-500/20 shadow-[0_20px_60px_rgba(15,23,42,0.08)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.50)] relative overflow-hidden flex items-center justify-center">
                 <div className="absolute inset-0 tc bg-gradient-to-br from-indigo-50 to-purple-100 dark:from-indigo-900/40 dark:to-purple-900/40" />
-                <motion.div animate={{ opacity: [0.2, 1, 0.2] }} transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
+                <motion.div
+                  animate={{ opacity: [0.2, 1, 0.2] }}
+                  transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
                   className="relative z-10 w-20 h-20 sm:w-24 sm:h-24 rounded-2xl flex items-center justify-center tc bg-white/80 dark:bg-white/12 border border-white dark:border-white/15 text-indigo-600 dark:text-indigo-300 shadow-[0_8px_24px_rgba(79,70,229,0.18)]">
                   <Brain size={44} className="sm:hidden" />
                   <Brain size={56} className="hidden sm:block" />
@@ -162,7 +215,7 @@ export default function HomePage() {
           </motion.div>
         </section>
 
-        {/* ── FEATURES ── */}
+        {/* ── FEATURES ────────────────────────────────────────────── */}
         <section id="features" className="py-14 sm:py-20 tc bg-slate-50 dark:bg-white/[0.025]">
           <div className={C}>
             <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.5 }} className="text-center mb-8 sm:mb-10">
@@ -183,7 +236,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ── HOW IT WORKS ── */}
+        {/* ── HOW IT WORKS ────────────────────────────────────────── */}
         <section id="how" className="py-14 sm:py-20 tc bg-white dark:bg-[#0b1020]">
           <div className={C}>
             <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.5 }} className="text-center mb-10 sm:mb-12">
@@ -205,7 +258,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ── CTA ── */}
+        {/* ── CTA ─────────────────────────────────────────────────── */}
         <section className="mx-3 sm:mx-6 mb-10 sm:mb-12 py-12 sm:py-16 rounded-2xl sm:rounded-3xl relative overflow-hidden text-white bg-gradient-to-br from-indigo-600 to-indigo-700 dark:from-indigo-700 dark:to-indigo-900">
           <div className="pointer-events-none absolute inset-0">
             <div className="absolute -top-20 -right-20 w-64 h-64 rounded-full bg-white/8 blur-3xl" />
@@ -217,20 +270,24 @@ export default function HomePage() {
               Join thousands of students already learning smarter with Lecture Brain.
             </p>
             <div className="flex justify-center gap-3 flex-wrap">
-              <motion.button whileHover={{ y: -2, boxShadow: "0 12px 30px rgba(0,0,0,0.30)" }} whileTap={{ scale: 0.96 }}
-                onClick={() => user ? go("/subjects") : go("/signup")}
+              <motion.button
+                whileHover={{ y: -2, boxShadow: "0 12px 30px rgba(0,0,0,0.30)" }} whileTap={{ scale: 0.96 }}
+                onClick={() => router.push(user ? dashboardPath : "/signup")}
                 className="h-10 sm:h-11 px-5 sm:px-7 rounded-xl font-bold text-[13px] sm:text-[14px] cursor-pointer border-0 bg-white text-indigo-700 shadow-[0_4px_18px_rgba(0,0,0,0.18)] transition-shadow">
-                Get Started Free
+                {user ? dashboardLabel : "Get Started Free"}
               </motion.button>
-              <motion.button whileHover={{ y: -2 }} whileTap={{ scale: 0.96 }}
-                className="h-10 sm:h-11 px-5 sm:px-7 rounded-xl font-bold text-[13px] sm:text-[14px] cursor-pointer bg-white/10 hover:bg-white/18 text-white border border-white/30 transition-colors">
-                View Demo
-              </motion.button>
+              {!user && (
+                <motion.button whileHover={{ y: -2 }} whileTap={{ scale: 0.96 }}
+                  onClick={() => router.push("/login")}
+                  className="h-10 sm:h-11 px-5 sm:px-7 rounded-xl font-bold text-[13px] sm:text-[14px] cursor-pointer bg-white/10 hover:bg-white/18 text-white border border-white/30 transition-colors">
+                  Sign In
+                </motion.button>
+              )}
             </div>
           </motion.div>
         </section>
 
-        {/* ── FOOTER ── */}
+        {/* ── FOOTER ──────────────────────────────────────────────── */}
         <footer className="tc border-t border-slate-200 dark:border-white/8 pt-10 sm:pt-12 pb-8">
           <div className={`${C} flex flex-col sm:flex-row justify-between gap-8 sm:gap-10 items-start mb-8`}>
             <div className="flex-shrink-0">

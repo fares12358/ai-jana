@@ -1,142 +1,118 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { axiosInstance, setAuthToken } from "@/utils/axios";
-import { apiRegister, apiLogin, apiGetMe } from "@/utils/api";
+import { setAuthToken } from "@/utils/axios";
+import { apiLogin, apiRegister } from "@/utils/api";
 
-// ─── Storage helpers ──────────────────────────────────────────────────────────
+/* ── Admin role check ────────────────────────────────────────────── */
+export const isAdminRole = (role) => role === "admin";
+export const ADMIN_EMAIL  = "admin@lecturebrain.com";
+
+/* ── Storage ─────────────────────────────────────────────────────── */
 const STORAGE_TOKEN = "lb_token";
 const STORAGE_USER  = "lb_user";
 
 function saveSession(token, user) {
-  try {
-    localStorage.setItem(STORAGE_TOKEN, token);
-    localStorage.setItem(STORAGE_USER, JSON.stringify(user));
-  } catch { /* ignore quota errors */ }
+  try { localStorage.setItem(STORAGE_TOKEN, token); localStorage.setItem(STORAGE_USER, JSON.stringify(user)); } catch { }
 }
-
 function clearSession() {
-  try {
-    localStorage.removeItem(STORAGE_TOKEN);
-    localStorage.removeItem(STORAGE_USER);
-  } catch { }
+  try { localStorage.removeItem(STORAGE_TOKEN); localStorage.removeItem(STORAGE_USER); } catch { }
 }
-
 function loadSession() {
   try {
     const token = localStorage.getItem(STORAGE_TOKEN);
     const raw   = localStorage.getItem(STORAGE_USER);
     return { token, user: raw ? JSON.parse(raw) : null };
-  } catch {
-    return { token: null, user: null };
-  }
+  } catch { return { token: null, user: null }; }
 }
 
-// ─── Contexts ─────────────────────────────────────────────────────────────────
+/* ── Contexts ────────────────────────────────────────────────────── */
 const AuthContext  = createContext(null);
 const ThemeContext = createContext(null);
 
-// ═════════════════════════════════════════════════════════════════════════════
-// AuthProvider
-// ═════════════════════════════════════════════════════════════════════════════
+/* ════════════════════════════════════════════════════════════════════
+   AuthProvider
+   Login response shape from backend:
+   {
+     access_token: "...",
+     token_type:   "bearer",
+     user: { id, email, role, is_active }
+   }
+══════════════════════════════════════════════════════════════════════ */
 export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null);
   const [token,   setToken]   = useState(null);
   const [loading, setLoading] = useState(false);
-  /** true once localStorage has been read and the token validated */
   const [ready,   setReady]   = useState(false);
 
-  // ── Internal persist helper ────────────────────────────────────────────────
   const _persist = useCallback((u, t) => {
     setUser(u);
     setToken(t);
-    setAuthToken(t);            // inject / remove from Axios defaults
+    setAuthToken(t);
     if (u && t) saveSession(t, u);
     else        clearSession();
   }, []);
 
-  // ── Hydrate session on mount ───────────────────────────────────────────────
+  /* ── Build normalised user from login response ───────────────────
+     Supports both shapes:
+       A) { access_token, token_type, user: {...} }   ← new backend
+       B) { access_token, token_type }                ← old backend (no user field)
+  ─────────────────────────────────────────────────────────────────── */
+  const _buildUser = useCallback((res, emailFallback = "") => {
+    const ru = res.user ?? {};
+    return {
+      id:       ru.id      ?? ru._id    ?? emailFallback,
+      email:    ru.email   ?? emailFallback,
+      name:     ru.name    ?? ru.email  ?? emailFallback,
+      role:     ru.role    ?? "user",
+      isAdmin:  isAdminRole(ru.role ?? ""),
+      isActive: ru.is_active ?? true,
+    };
+  }, []);
+
+  /* Hydrate from localStorage on mount */
   useEffect(() => {
     (async () => {
       const { token: savedToken, user: savedUser } = loadSession();
-
-      if (savedToken) {
-        // Inject token so the /auth/me call is authenticated
+      if (savedToken && savedUser) {
+        // Trust the stored session — no /auth/me call needed since
+        // login response already contains the full user object
         setAuthToken(savedToken);
-
-        try {
-          // Validate the token with the backend — refreshes user data too
-          const me = await apiGetMe();
-          const u  = {
-            id:    me.id    ?? me._id  ?? savedUser?.id ?? savedToken,
-            email: me.email ?? savedUser?.email ?? "",
-            name:  me.name  ?? me.email ?? savedUser?.name ?? "",
-          };
-          setToken(savedToken);
-          setUser(u);
-          saveSession(savedToken, u);   // update stored user with fresh data
-        } catch {
-          // Token is expired or invalid → clear everything
-          // (The 401 interceptor in axios.js will also do this, but we catch here
-          //  to avoid a redirect during the initial hydration.)
-          _persist(null, null);
-        }
+        setToken(savedToken);
+        setUser(savedUser);
       }
-
       setReady(true);
     })();
-  }, [_persist]);
+  }, []);
 
-  // ── signup / register → auto-login ────────────────────────────────────────
+  /* signup */
   const signup = useCallback(async ({ name, email, password }) => {
     setLoading(true);
     try {
-      // 1. Register
       await apiRegister({ email, password });
-
-      // 2. Auto-login to obtain the access token
-      const loginRes = await apiLogin({ email, password });
-      const tok      = loginRes.access_token;
-
-      // 3. Inject token and fetch real user profile
+      const res = await apiLogin({ email, password });
+      const tok = res.access_token;
       setAuthToken(tok);
-      let u = { id: email, email, name: name || email };
-      try {
-        const me = await apiGetMe();
-        u = { id: me.id ?? me._id ?? email, email: me.email ?? email, name: me.name ?? name ?? email };
-      } catch { /* /auth/me not critical here */ }
-
+      const u = _buildUser(res, email);
+      if (name && !u.name) u.name = name;
       _persist(u, tok);
       return { user: u, token: tok };
-    } finally {
-      setLoading(false);
-    }
-  }, [_persist]);
+    } finally { setLoading(false); }
+  }, [_persist, _buildUser]);
 
-  // ── login ──────────────────────────────────────────────────────────────────
+  /* login — reads user from login response directly */
   const login = useCallback(async ({ email, password }) => {
     setLoading(true);
     try {
-      // OAuth2 password flow → returns { access_token, token_type }
       const res = await apiLogin({ email, password });
       const tok = res.access_token;
-
-      // Inject token then fetch real user data
       setAuthToken(tok);
-      let u = { id: email, email, name: email };
-      try {
-        const me = await apiGetMe();
-        u = { id: me.id ?? me._id ?? email, email: me.email ?? email, name: me.name ?? email };
-      } catch { /* /auth/me not critical — use fallback user */ }
-
+      const u = _buildUser(res, email);
       _persist(u, tok);
       return { user: u, token: tok };
-    } finally {
-      setLoading(false);
-    }
-  }, [_persist]);
+    } finally { setLoading(false); }
+  }, [_persist, _buildUser]);
 
-  // ── logout ─────────────────────────────────────────────────────────────────
   const logout = useCallback(() => _persist(null, null), [_persist]);
 
   return (
@@ -152,9 +128,9 @@ export function useAuth() {
   return ctx;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ThemeProvider
-// ═════════════════════════════════════════════════════════════════════════════
+/* ════════════════════════════════════════════════════════════════════
+   ThemeProvider
+══════════════════════════════════════════════════════════════════════ */
 export function ThemeProvider({ children }) {
   const [dark, setDark] = useState(false);
 
