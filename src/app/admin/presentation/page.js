@@ -1,14 +1,23 @@
 "use client";
+/**
+ * Presentation Generator — /admin/presentation
+ *
+ * Uses GET /admin/presentation/{lecture_id} (the correct admin endpoint)
+ * to fetch AI-generated slides for a completed lecture.
+ *
+ * Falls back to building slides from summary + quiz if the admin endpoint
+ * returns raw knowledge-card data rather than pre-built slide objects.
+ */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  FaUpload, FaFileAlt, FaVideo, FaMagic, FaBolt,
+  FaUpload, FaFileAlt, FaVideo, FaMagic,
   FaTimes, FaChevronLeft, FaChevronRight, FaDownload,
   FaBookOpen, FaFolderOpen, FaSync, FaExclamationTriangle,
 } from "react-icons/fa";
-import { useAdminData, GRAD_COLORS } from "@/hooks/useAdminData";
-import { apiGetSummary, apiGenerateQuiz } from "@/utils/api";
+import { useAdminData } from "@/hooks/useAdminData";
+import { apiAdminPresentation } from "@/utils/api";
 
-/* ── Styles ───────────────────────────────────────────────────────── */
+/* ── Presentation styles ──────────────────────────────────────────── */
 const STYLES = ["Simple", "Visual", "Detailed"];
 
 const SLIDE_COLORS = [
@@ -20,12 +29,12 @@ const SLIDE_COLORS = [
   "from-rose-500 to-red-600",
 ];
 
-/* ── Safely extract a string from any value ───────────────────────── */
+/* ── Safely coerce any value to a display string ──────────────────── */
 function str(v) {
   if (!v) return "";
   if (typeof v === "string") return v;
   if (typeof v === "object") {
-    for (const f of ["text","content","name","title","description","value","label"]) {
+    for (const f of ["text", "content", "name", "title", "description", "value", "label"]) {
       if (typeof v[f] === "string" && v[f].trim()) return v[f];
     }
     return JSON.stringify(v);
@@ -33,74 +42,67 @@ function str(v) {
   return String(v);
 }
 
-/* ── Build slides from summary + quiz API responses ──────────────── */
-function buildSlides(lectureTitle, summaryData, quizData, style) {
+/* ── Build slides from API response ──────────────────────────────────
+   The /admin/presentation/{id} endpoint may return either:
+   A) { slides: [{ title, body/content, ... }] }  — pre-built slides
+   B) A knowledge card / summary object            — we build slides
+──────────────────────────────────────────────────────────────────── */
+function buildSlides(lectureTitle, apiData, style) {
+  /* Case A: backend already returns slides array */
+  if (apiData?.slides && Array.isArray(apiData.slides)) {
+    const built = apiData.slides.map((s, i) => ({
+      title: str(s.title ?? `Slide ${i + 1}`),
+      body:  str(s.body ?? s.content ?? s.text ?? ""),
+      color: SLIDE_COLORS[i % SLIDE_COLORS.length],
+    }));
+    if (built.length) return built;
+  }
+
+  /* Case B: build from knowledge card / summary fields */
   const slides = [];
 
-  /* Slide 0 — Title */
   slides.push({
     title: lectureTitle || "Lecture Overview",
-    body:  "AI-generated presentation from lecture knowledge card",
+    body:  "AI-generated presentation",
     color: SLIDE_COLORS[0],
   });
 
-  /* Parse summary / knowledge card */
-  if (summaryData) {
-    const src = typeof summaryData === "string" ? null : summaryData;
-    const kc  = src?.knowledge_card ?? src?.knowledgeCard ?? src;
+  const kc = apiData?.knowledge_card ?? apiData?.knowledgeCard ?? apiData;
 
-    if (typeof summaryData === "string" && summaryData.trim()) {
-      slides.push({ title: "Summary", body: summaryData, color: SLIDE_COLORS[1] });
-    } else if (kc && typeof kc === "object") {
-      const overview = kc.overview ?? kc.description ?? kc.summary_text ?? "";
-      if (overview) slides.push({ title: "Overview", body: str(overview), color: SLIDE_COLORS[1] });
+  if (kc && typeof kc === "object") {
+    const overview = kc.overview ?? kc.description ?? kc.summary_text ?? "";
+    if (overview) slides.push({ title: "Overview", body: str(overview), color: SLIDE_COLORS[1] });
 
-      const concepts = kc.key_concepts ?? kc.keyConcepts ?? kc.concepts ?? [];
-      if (Array.isArray(concepts) && concepts.length) {
-        const limit = style === "Detailed" ? 8 : style === "Visual" ? 5 : 4;
-        const body  = concepts.slice(0, limit).map(c => {
-          const label  = typeof c === "string" ? c : str(c.concept ?? c.name ?? c.title ?? c);
-          const detail = typeof c === "object"  ? str(c.definition ?? c.description ?? "") : "";
-          return `• ${label}${detail ? `: ${detail}` : ""}`;
-        }).join("\n");
-        slides.push({ title: "Key Concepts", body, color: SLIDE_COLORS[2] });
-      }
-
-      const topics = kc.main_topics ?? kc.mainTopics ?? kc.key_points ?? kc.keyPoints ?? [];
-      if (Array.isArray(topics) && topics.length) {
-        slides.push({
-          title: "Main Topics",
-          body:  topics.map(t => `• ${str(typeof t === "object" ? (t.topic ?? t.name ?? t) : t)}`).join("\n"),
-          color: SLIDE_COLORS[3],
-        });
-      }
-
-      const conclusion = kc.conclusion ?? kc.summary ?? "";
-      if (conclusion) slides.push({ title: "Conclusion", body: str(conclusion), color: SLIDE_COLORS[4] });
+    const concepts = kc.key_concepts ?? kc.keyConcepts ?? kc.concepts ?? [];
+    if (Array.isArray(concepts) && concepts.length) {
+      const limit = style === "Detailed" ? 8 : style === "Visual" ? 5 : 4;
+      const body  = concepts.slice(0, limit).map(c => {
+        const label  = typeof c === "string" ? c : str(c.concept ?? c.name ?? c.title ?? c);
+        const detail = typeof c === "object"  ? str(c.definition ?? c.description ?? "") : "";
+        return `• ${label}${detail ? `: ${detail}` : ""}`;
+      }).join("\n");
+      slides.push({ title: "Key Concepts", body, color: SLIDE_COLORS[2] });
     }
+
+    const topics = kc.main_topics ?? kc.mainTopics ?? kc.key_points ?? kc.keyPoints ?? [];
+    if (Array.isArray(topics) && topics.length) {
+      slides.push({
+        title: "Main Topics",
+        body:  topics.map(t => `• ${str(typeof t === "object" ? (t.topic ?? t.name ?? t) : t)}`).join("\n"),
+        color: SLIDE_COLORS[3],
+      });
+    }
+
+    const conclusion = kc.conclusion ?? kc.summary ?? "";
+    if (conclusion) slides.push({ title: "Conclusion", body: str(conclusion), color: SLIDE_COLORS[4] });
+  } else if (typeof apiData === "string" && apiData.trim()) {
+    slides.push({ title: "Summary", body: apiData, color: SLIDE_COLORS[1] });
   }
 
-  /* Parse quiz */
-  if (quizData) {
-    const arr = Array.isArray(quizData)          ? quizData
-              : Array.isArray(quizData.questions) ? quizData.questions
-              : Array.isArray(quizData.quiz)       ? quizData.quiz
-              : null;
-    if (arr?.length) {
-      const limit = style === "Simple" ? 3 : 5;
-      const body  = arr.slice(0, limit).map((q, i) => {
-        const qText = str(q.question ?? q.text ?? q.stem ?? `Question ${i + 1}`);
-        return `Q${i + 1}. ${qText}`;
-      }).join("\n\n");
-      slides.push({ title: "Review Questions", body, color: SLIDE_COLORS[5] });
-    }
-  }
-
-  /* Fallback if only title was generated */
   if (slides.length <= 1) {
     slides.push({
       title: "Content Not Available",
-      body:  "No summary or quiz data found for this lecture.\n\nMake sure the lecture has been fully ingested (status: Completed) before generating a presentation.",
+      body:  "No slide data found for this lecture.\n\nMake sure the lecture has been fully ingested (status: Ready) before generating a presentation.",
       color: SLIDE_COLORS[1],
     });
   }
@@ -114,10 +116,9 @@ function buildSlides(lectureTitle, summaryData, quizData, style) {
 export default function PresentationPage() {
   const fileRef = useRef(null);
 
-  /* Shared admin data — subjects + completed lectures */
   const { subjects, lectures, loading: dataLoading, error: dataError, fetchAll } = useAdminData();
 
-  /* Only show completed lectures (can generate AI content) */
+  /* Only completed lectures can generate presentations */
   const completedLectures = lectures.filter(l => l.status === "completed");
 
   /* UI state */
@@ -131,72 +132,59 @@ export default function PresentationPage() {
   const [generating,       setGenerating]       = useState(false);
   const [genError,         setGenError]         = useState("");
 
-  /* Lectures for the selected subject */
+  /* Lectures filtered by subject selection */
   const subjectLectures = completedLectures.filter(
     l => !selectedSubject || l._subjectId === selectedSubject
   );
 
-  /* Selected lecture object */
   const selectedLec = completedLectures.find(
     l => String(l.id ?? l._id ?? "") === selectedLecture
   );
 
-  /* Reset lecture selection when subject changes */
   useEffect(() => { setSelectedLecture(""); }, [selectedSubject]);
 
   /* File handlers */
   const handleFile = (f) => f && setFile(f);
-  const handleDrop = (e) => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); };
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    handleFile(e.dataTransfer.files[0]);
+  };
 
-  /* Generate slides from real API */
-  const generate = useCallback(async (smart = false) => {
-    const hasSource = !!file || !!selectedLecture;
-    if (!hasSource && !smart) return;
+  /* Generate — uses GET /admin/presentation/{lecture_id} */
+  const generate = useCallback(async () => {
+    if (!selectedLecture && !file) return;
 
     setGenerating(true);
     setGenError("");
     setSlides(null);
 
     try {
-      let summaryData  = null;
-      let quizData     = null;
+      let apiData      = null;
       let lectureTitle = "Lecture";
 
       if (selectedLecture) {
-        /* Named lecture selected */
         lectureTitle = selectedLec?.title ?? selectedLec?.name ?? "Lecture";
-        const [sumRes, quizRes] = await Promise.allSettled([
-          apiGetSummary(selectedLecture),
-          apiGenerateQuiz(selectedLecture),
-        ]);
-        if (sumRes.status  === "fulfilled") summaryData = sumRes.value;
-        if (quizRes.status === "fulfilled") quizData    = quizRes.value;
-
-      } else if (smart && completedLectures.length > 0) {
-        /* Smart mode — use first available completed lecture */
-        const first = completedLectures[0];
-        const lid   = first.id ?? first._id;
-        lectureTitle = first.title ?? first.name ?? "Lecture";
-        const [sumRes, quizRes] = await Promise.allSettled([
-          apiGetSummary(lid),
-          apiGenerateQuiz(lid),
-        ]);
-        if (sumRes.status  === "fulfilled") summaryData = sumRes.value;
-        if (quizRes.status === "fulfilled") quizData    = quizRes.value;
-
+        /* ← Correct admin endpoint per ADMIN_INTEGRATION.md */
+        apiData = await apiAdminPresentation(selectedLecture);
       } else if (file) {
-        /* File-only — placeholder presentation */
+        /* File-only mode — no API call available, show placeholder */
         lectureTitle = file.name.replace(/\.[^.]+$/, "");
+        apiData = null;
       }
 
-      setSlides(buildSlides(lectureTitle, summaryData, quizData, style));
+      setSlides(buildSlides(lectureTitle, apiData, style));
       setCurrent(0);
     } catch (err) {
-      setGenError(err.message || "Generation failed. Please try again.");
+      setGenError(
+        err?.response?.data?.detail ??
+        err.message ??
+        "Generation failed. Please try again."
+      );
     } finally {
       setGenerating(false);
     }
-  }, [file, selectedLecture, selectedLec, completedLectures, style]);
+  }, [file, selectedLecture, selectedLec, style]);
 
   const prev        = () => setCurrent(c => Math.max(0, c - 1));
   const next        = () => setCurrent(c => Math.min((slides?.length ?? 1) - 1, c + 1));
@@ -211,26 +199,30 @@ export default function PresentationPage() {
           AI Presentation Generator
         </h1>
         <p className="text-[13px] sm:text-[14px] text-slate-500 dark:text-slate-400 mt-0.5">
-          Select a completed lecture to generate slides from its knowledge card
+          Generates slides via{" "}
+          <code className="text-[11px] bg-slate-100 dark:bg-white/8 px-1.5 py-0.5 rounded">
+            GET /admin/presentation/{"{lecture_id}"}
+          </code>
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
 
-        {/* ── LEFT ────────────────────────────────────────────────── */}
+        {/* ── LEFT — Controls ──────────────────────────────────────── */}
         <div className="flex flex-col gap-4">
 
           {/* Lecture selector */}
           <div className="bg-white dark:bg-[#0f1117] border border-slate-200 dark:border-white/8 rounded-2xl p-4 sm:p-6 shadow-[0_2px_12px_rgba(15,23,42,0.05)] dark:shadow-none">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-[14px] sm:text-[15px] font-black text-slate-900 dark:text-white">Select Lecture</h2>
+              <h2 className="text-[14px] sm:text-[15px] font-black text-slate-900 dark:text-white">
+                Select Lecture
+              </h2>
               <button onClick={fetchAll} disabled={dataLoading}
                 className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer border-0 bg-transparent">
                 <FaSync className={`text-[10px] ${dataLoading ? "animate-spin" : ""}`} /> Refresh
               </button>
             </div>
 
-            {/* Data error */}
             {dataError && (
               <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl mb-3 bg-red-50 dark:bg-red-500/12 border border-red-200 dark:border-red-500/25 text-red-600 dark:text-red-400 text-[12px] font-semibold">
                 <FaExclamationTriangle className="text-[11px] flex-shrink-0" />
@@ -252,7 +244,7 @@ export default function PresentationPage() {
                            text-slate-800 dark:text-slate-200
                            focus:border-indigo-400 dark:focus:border-indigo-500/60
                            focus:shadow-[0_0_0_3px_rgba(99,102,241,0.12)] disabled:opacity-60">
-                <option value="">All Subjects ({completedLectures.length} ready lectures)</option>
+                <option value="">All Subjects ({completedLectures.length} ready)</option>
                 {subjects.map(s => {
                   const sid = String(s.id ?? s._id ?? "");
                   const cnt = completedLectures.filter(l => l._subjectId === sid).length;
@@ -273,7 +265,7 @@ export default function PresentationPage() {
               {!dataLoading && subjectLectures.length === 0 ? (
                 <p className="text-[12px] text-slate-400 dark:text-slate-500 py-2 px-3 rounded-xl bg-slate-50 dark:bg-white/4 border border-dashed border-slate-200 dark:border-white/10">
                   No completed lectures{selectedSubject ? " in this subject" : ""} yet.
-                  Lectures must be fully ingested (status: Ready) before generating slides.
+                  Lectures must be fully ingested before generating slides.
                 </p>
               ) : (
                 <select
@@ -299,7 +291,7 @@ export default function PresentationPage() {
               )}
             </div>
 
-            {/* Selected lecture pill */}
+            {/* Selected pill */}
             {selectedLec && (
               <div className="flex items-center gap-2.5 mt-3 px-3 py-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-500/15 border border-indigo-200 dark:border-indigo-500/30">
                 <FaBookOpen className="text-indigo-500 text-[13px] flex-shrink-0" />
@@ -352,8 +344,7 @@ export default function PresentationPage() {
                     : dragging
                       ? "cursor-pointer border-indigo-400 bg-indigo-50 dark:bg-indigo-500/10"
                       : "cursor-pointer border-slate-300 dark:border-white/15 hover:border-indigo-400 dark:hover:border-indigo-500/40 hover:bg-slate-50 dark:hover:bg-white/3"
-                  }`}
-              >
+                  }`}>
                 <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-white/8 flex items-center justify-center">
                   <FaUpload className="text-slate-400 dark:text-slate-500 text-[16px]" />
                 </div>
@@ -377,7 +368,9 @@ export default function PresentationPage() {
 
           {/* Style selector */}
           <div className="bg-white dark:bg-[#0f1117] border border-slate-200 dark:border-white/8 rounded-2xl p-4 sm:p-6 shadow-[0_2px_12px_rgba(15,23,42,0.05)] dark:shadow-none">
-            <h2 className="text-[14px] sm:text-[15px] font-black text-slate-900 dark:text-white mb-4">Presentation Style</h2>
+            <h2 className="text-[14px] sm:text-[15px] font-black text-slate-900 dark:text-white mb-4">
+              Presentation Style
+            </h2>
             <div className="grid grid-cols-3 gap-2 sm:gap-3">
               {STYLES.map(s => (
                 <button key={s} onClick={() => setStyle(s)}
@@ -392,7 +385,7 @@ export default function PresentationPage() {
             </div>
           </div>
 
-          {/* Generation error */}
+          {/* Error */}
           {genError && (
             <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-red-50 dark:bg-red-500/12 border border-red-200 dark:border-red-500/25 text-red-600 dark:text-red-400 text-[13px] font-semibold">
               <FaExclamationTriangle className="text-[13px] flex-shrink-0 mt-0.5" />
@@ -400,43 +393,31 @@ export default function PresentationPage() {
             </div>
           )}
 
-          {/* Action buttons */}
-          <div className="flex flex-col gap-3">
-            <button
-              onClick={() => generate(false)}
-              disabled={!canGenerate || generating}
-              className={`w-full py-3 sm:py-3.5 rounded-xl text-[13px] sm:text-[14px] font-bold cursor-pointer border-0
-                          flex items-center justify-center gap-2 transition-all
-                ${(!canGenerate || generating)
-                  ? "bg-slate-200 dark:bg-white/8 text-slate-400 dark:text-slate-500 cursor-not-allowed"
-                  : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-[0_4px_16px_rgba(99,102,241,0.30)]"
-                }`}>
-              {generating
-                ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating…</>
-                : <><FaMagic className="text-[13px]" /> Generate Presentation</>
-              }
-            </button>
-
-            <button
-              onClick={() => generate(true)}
-              disabled={generating || completedLectures.length === 0}
-              title={completedLectures.length === 0 ? "No completed lectures available" : "Generate from first available completed lecture"}
-              className="w-full py-3 sm:py-3.5 rounded-xl text-[13px] sm:text-[14px] font-bold cursor-pointer border-0
-                         flex items-center justify-center gap-2
-                         bg-indigo-600 hover:bg-indigo-700 text-white
-                         shadow-[0_4px_16px_rgba(99,102,241,0.30)] transition-all
-                         disabled:opacity-60 disabled:cursor-not-allowed">
-              <FaBolt className="text-[13px]" /> Generate from Weak Topics (Smart Mode)
-            </button>
-          </div>
+          {/* Generate button */}
+          <button
+            onClick={generate}
+            disabled={!canGenerate || generating}
+            className={`w-full py-3 sm:py-3.5 rounded-xl text-[13px] sm:text-[14px] font-bold cursor-pointer border-0
+                        flex items-center justify-center gap-2 transition-all
+              ${(!canGenerate || generating)
+                ? "bg-slate-200 dark:bg-white/8 text-slate-400 dark:text-slate-500 cursor-not-allowed"
+                : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-[0_4px_16px_rgba(99,102,241,0.30)]"
+              }`}>
+            {generating
+              ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating…</>
+              : <><FaMagic className="text-[13px]" /> Generate Presentation</>
+            }
+          </button>
         </div>
 
-        {/* ── RIGHT — Slide preview ──────────────────────────────── */}
+        {/* ── RIGHT — Slide preview ─────────────────────────────── */}
         <div className="bg-white dark:bg-[#0f1117] border border-slate-200 dark:border-white/8 rounded-2xl p-4 sm:p-6 shadow-[0_2px_12px_rgba(15,23,42,0.05)] dark:shadow-none flex flex-col min-h-[400px] sm:min-h-0">
 
           {/* Preview header */}
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-[14px] sm:text-[15px] font-black text-slate-900 dark:text-white">Slide Preview</h2>
+            <h2 className="text-[14px] sm:text-[15px] font-black text-slate-900 dark:text-white">
+              Slide Preview
+            </h2>
             {slides && (
               <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                 <button onClick={prev} disabled={current === 0}
@@ -450,7 +431,9 @@ export default function PresentationPage() {
                   className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-500 dark:text-slate-400 disabled:opacity-40 cursor-pointer hover:bg-slate-50 dark:hover:bg-white/8 transition-colors">
                   <FaChevronRight size={11} />
                 </button>
-                <button className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-[12px] font-bold cursor-pointer border-0 bg-indigo-600 hover:bg-indigo-700 text-white transition-colors">
+                <button
+                  title="Export is not yet supported"
+                  className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-[12px] font-bold cursor-not-allowed border-0 opacity-40 bg-indigo-600 text-white">
                   <FaDownload size={11} /> Export
                 </button>
               </div>
@@ -482,7 +465,7 @@ export default function PresentationPage() {
               <div className="flex flex-col items-center gap-3 text-slate-400 dark:text-slate-500 py-16 border-2 border-dashed border-slate-200 dark:border-white/10 rounded-2xl w-full">
                 <FaMagic className="text-[28px] sm:text-[32px]" />
                 <p className="text-[12px] sm:text-[13px] text-center px-4">
-                  Select a completed lecture or upload a file,<br />then click Generate
+                  Select a completed lecture, then click <strong>Generate Presentation</strong>
                 </p>
                 {completedLectures.length === 0 && !dataLoading && (
                   <p className="text-[11px] text-amber-500 dark:text-amber-400 text-center px-4">
@@ -501,7 +484,9 @@ export default function PresentationPage() {
                   className={`flex-shrink-0 w-16 sm:w-20 h-11 sm:h-14 rounded-xl overflow-hidden border-2 cursor-pointer transition-all bg-gradient-to-br ${s.color}
                     ${i === current ? "border-indigo-500 scale-105 shadow-lg" : "border-transparent opacity-60 hover:opacity-80"}`}>
                   <div className="w-full h-full flex items-end p-1.5">
-                    <span className="text-[7px] sm:text-[8px] font-black text-white/80 leading-tight line-clamp-2">{s.title}</span>
+                    <span className="text-[7px] sm:text-[8px] font-black text-white/80 leading-tight line-clamp-2">
+                      {s.title}
+                    </span>
                   </div>
                 </button>
               ))}
