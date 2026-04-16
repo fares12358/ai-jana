@@ -16,8 +16,9 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en" className="">
       <head>
+      <meta name="apple-mobile-web-app-title" content="MyWebSite" />
         {/*
-          Anti-flash inline script: reads localStorage BEFORE paint so the
+          Anti-flash inline script: reads localStorage BEFORE paint so the  
           correct dark/light class is already on <html> when CSS loads.
           Must stay synchronous — no defer / async.
         */}
