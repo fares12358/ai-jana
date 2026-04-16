@@ -17,9 +17,9 @@ import { useTheme } from "@/context/AppContext";
 
 const NAV = [
   { label: "Dashboard", href: "/admin", icon: FaChartBar },
-  { label: "Students", href: "/admin/students", icon: FaUsers },
-  { label: "Analytics", href: "/admin/analytics", icon: FaChartLine },
-  { label: "Presentation Generator", href: "/admin/presentation", icon: FaMagic },
+  // { label: "Students", href: "/admin/students", icon: FaUsers },
+  // { label: "Analytics", href: "/admin/analytics", icon: FaChartLine },
+  // { label: "Presentation Generator", href: "/admin/presentation", icon: FaMagic },
 ];
 
 function SidebarContent({ onClose }) {

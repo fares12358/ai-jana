@@ -1,29 +1,17 @@
 /**
  * utils/api.js — Centralised API function library
  * Backend: https://lecture-brain-last-production.up.railway.app
- *
- * Domains:
- *   auth      — register, login
- *   subjects  — CRUD
- *   lectures  — CRUD + status polling
- *   knowledge — text / PDF / video ingestion
- *   ai        — chat, explain, summary, quiz
- *   admin     — analytics, generate, presentation, upload, operations
  */
 
 import { axiosInstance } from "./axios";
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
-/** POST /auth/register — { email, password }
- *  Returns: { id, email, ... } */
 export function apiRegister({ email, password }) {
   return axiosInstance.post("/auth/register", { email, password },
     { headers: { "Content-Type": "application/json" } });
 }
 
-/** POST /auth/login — OAuth2 form-data
- *  Returns: { access_token, token_type, user: { id, email, role, is_active } } */
 export function apiLogin({ email, password }) {
   const form = new URLSearchParams();
   form.append("username", email);
@@ -32,24 +20,16 @@ export function apiLogin({ email, password }) {
     { headers: { "Content-Type": "application/x-www-form-urlencoded" } });
 }
 
-/** GET /auth/me — Returns current user profile (optional, kept for compatibility) */
-export function apiGetMe() {
-  return axiosInstance.get("/auth/me");
-}
+export const apiGetMe = () => axiosInstance.get("/auth/me");
 
 // ─── SUBJECTS ─────────────────────────────────────────────────────────────────
 
 export const apiCreateSubject = ({ name, description = "" }) =>
   axiosInstance.post("/subjects/", { name, description });
 
-export const apiGetSubjects = () =>
-  axiosInstance.get("/subjects/");
-
-export const apiGetSubject = (id) =>
-  axiosInstance.get(`/subjects/${id}`);
-
-export const apiDeleteSubject = (id) =>
-  axiosInstance.delete(`/subjects/${id}`);
+export const apiGetSubjects = () => axiosInstance.get("/subjects/");
+export const apiGetSubject = (id) => axiosInstance.get(`/subjects/${id}`);
+export const apiDeleteSubject = (id) => axiosInstance.delete(`/subjects/${id}`);
 
 // ─── LECTURES ─────────────────────────────────────────────────────────────────
 
@@ -59,14 +39,9 @@ export const apiCreateLecture = ({ title, description = "", subject_id }) =>
 export const apiGetLecturesBySubject = (subjectId) =>
   axiosInstance.get(`/lectures/subject/${subjectId}`);
 
-export const apiGetLecture = (id) =>
-  axiosInstance.get(`/lectures/${id}`);
-
-export const apiGetLectureStatus = (id) =>
-  axiosInstance.get(`/lectures/${id}/status`);
-
-export const apiDeleteLecture = (id) =>
-  axiosInstance.delete(`/lectures/${id}`);
+export const apiGetLecture = (id) => axiosInstance.get(`/lectures/${id}`);
+export const apiGetLectureStatus = (id) => axiosInstance.get(`/lectures/${id}/status`);
+export const apiDeleteLecture = (id) => axiosInstance.delete(`/lectures/${id}`);
 
 // ─── KNOWLEDGE INGESTION ──────────────────────────────────────────────────────
 
@@ -95,48 +70,63 @@ export const apiChat = ({ message, lecture_id, history = [] }) =>
 export const apiExplain = ({ concept, lecture_id }) =>
   axiosInstance.post("/ai/explain", { concept, lecture_id });
 
-export const apiGetSummary = (lectureId) =>
-  axiosInstance.get(`/ai/summary/${lectureId}`);
-
-export const apiGenerateQuiz = (lectureId) =>
-  axiosInstance.post(`/ai/quiz/${lectureId}`);
+export const apiGetSummary = (lectureId) => axiosInstance.get(`/ai/summary/${lectureId}`);
+export const apiGenerateQuiz = (lectureId) => axiosInstance.post(`/ai/quiz/${lectureId}`);
 
 // ─── ADMIN ────────────────────────────────────────────────────────────────────
 // All admin routes require Authorization: Bearer <admin_token>
 
 /**
  * GET /admin/analytics
- * Returns platform-wide analytics stats.
- * @returns {{ total_users, total_subjects, total_lectures, total_chunks,
- *             lectures_by_status: { completed, processing, failed },
- *             recent_activity: [...], ... }}
+ * Returns array of per-subject analytics objects.
+ * @returns {Array<{
+ *   subject_id: string,
+ *   subject_name: string,
+ *   weak_topics: Array<{ topic: string, frequency_score: number }>,
+ *   common_questions: string[],
+ *   confusing_concepts: string[],
+ *   engagement_count: number,
+ *   ai_insight: string,
+ *   last_analyzed_at: string
+ * }>}
  */
 export const apiAdminAnalytics = () =>
   axiosInstance.get("/admin/analytics");
 
 /**
  * POST /admin/analytics/generate
- * Triggers analytics regeneration / refresh on the backend.
- * @returns {{ message, ... }}
+ * Manually triggers batch LLM analysis of all unanalyzed chat logs.
+ * @returns {{ subjects_processed: number, total_messages_analyzed: number, message: string }}
  */
 export const apiAdminAnalyticsGenerate = () =>
   axiosInstance.post("/admin/analytics/generate");
 
 /**
+ * GET /admin/analytics/insights
+ * Returns platform-wide aggregated AI insights summary.
+ * Expected shape (defensive — real shape confirmed from swagger):
+ * @returns {{
+ *   total_subjects_analyzed: number,
+ *   total_messages_analyzed: number,
+ *   top_weak_topics: Array<{ topic: string, frequency_score: number, subject_name?: string }>,
+ *   overall_insight: string,
+ *   platform_health: string,        // e.g. "good" | "needs_attention" | "critical"
+ *   last_generated_at: string,
+ *   subjects_summary?: Array<any>   // may include per-subject roll-up
+ * }}
+ */
+export const apiAdminAnalyticsInsights = () =>
+  axiosInstance.get("/admin/analytics/insights");
+
+/**
  * GET /admin/presentation/{lecture_id}
  * Returns AI-generated presentation slides for a lecture.
- * @param {string} lectureId
- * @returns {{ slides: [...], lecture_title: string, ... }}
  */
 export const apiAdminPresentation = (lectureId) =>
   axiosInstance.get(`/admin/presentation/${lectureId}`);
 
 /**
- * POST /admin/upload_pdf
- * Admin-level PDF upload (not tied to a specific lecture).
- * Form data: file
- * @param {File} file
- * @param {(pct: number) => void} [onProgress]
+ * POST /admin/upload_pdf — Admin-level PDF upload
  */
 export function apiAdminUploadPdf(file, onProgress) {
   const form = new FormData();
@@ -150,17 +140,28 @@ export function apiAdminUploadPdf(file, onProgress) {
 }
 
 /**
- * POST /admin/upload_video
- * Admin-level video URL upload.
- * @param {{ url: string, extract_frames?: boolean }} body
+ * POST /admin/upload_video — Admin-level video URL upload
  */
 export const apiAdminUploadVideo = ({ url, extract_frames = false }) =>
   axiosInstance.post("/admin/upload_video", { url, extract_frames });
 
 /**
  * GET /admin/operations
- * Returns recent admin operations / system log.
- * @returns {{ operations: [...], ... }}
+ * Returns array of lecture pipeline statuses.
+ * @returns {Array<{
+ *   lecture_id: string,
+ *   title: string,
+ *   status: string,
+ *   created_at: string,
+ *   job_tracker: {
+ *     upload_status: string,
+ *     extraction_status: string,
+ *     chunking_status: string,
+ *     embedding_status: string,
+ *     card_generation_status: string,
+ *     error_traceback: string | null
+ *   }
+ * }>}
  */
 export const apiAdminOperations = () =>
   axiosInstance.get("/admin/operations");
