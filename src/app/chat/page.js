@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft, Sun, Moon, LogOut,
   BookOpen, FileText, HelpCircle, Sparkles, Send,
-  AlertCircle, RefreshCw, CheckCircle,
+  AlertCircle, RefreshCw, CheckCircle, Clock,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth, useTheme } from "@/context/AppContext";
@@ -15,6 +15,7 @@ import {
   apiGenerateQuiz,
   apiChat,
   apiExplain,
+  apiGetChatHistory,
 } from "@/utils/api";
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -22,22 +23,16 @@ import {
    These handle every shape the backend might return without throwing.
 ══════════════════════════════════════════════════════════════════════ */
 
-/**
- * Recursively convert any value to a readable string.
- * Handles: string | number | boolean | null | object | array
- */
 function deepStr(val) {
   if (val === null || val === undefined) return "";
   if (typeof val === "string") return val;
   if (typeof val === "number" || typeof val === "boolean") return String(val);
   if (Array.isArray(val)) return val.map(deepStr).filter(Boolean).join(", ");
   if (typeof val === "object") {
-    // Try common text fields in priority order
     const textFields = ["text", "content", "label", "value", "name", "title", "description", "answer", "option"];
     for (const f of textFields) {
       if (typeof val[f] === "string" && val[f].trim()) return val[f];
     }
-    // Fall back to first string-valued property
     for (const v of Object.values(val)) {
       if (typeof v === "string" && v.trim()) return v;
     }
@@ -46,24 +41,15 @@ function deepStr(val) {
   return String(val);
 }
 
-/**
- * Parse a single quiz question from any known shape into a normalised object:
- * { question: string, options: string[], correct: string | null, explanation: string | null }
- */
 function parseQuestion(raw, idx) {
   if (!raw || typeof raw !== "object") {
     return { question: deepStr(raw), options: [], correct: null, explanation: null };
   }
-
-  // Question text — many possible field names
   const question =
     raw.question ?? raw.text ?? raw.q ??
     raw.stem ?? raw.prompt ?? raw.content ??
     raw.title ?? `Question ${idx + 1}`;
-
-  // Options — handle: string[], object[], {A,B,C,D}, {options:{A,B,C,D}}
   let options = [];
-
   if (Array.isArray(raw.options)) {
     options = raw.options.map(deepStr);
   } else if (Array.isArray(raw.choices)) {
@@ -71,146 +57,161 @@ function parseQuestion(raw, idx) {
   } else if (Array.isArray(raw.answers)) {
     options = raw.answers.map(deepStr);
   } else if (raw.options && typeof raw.options === "object") {
-    // options = { A: "...", B: "...", ... }
     options = Object.entries(raw.options).map(([k, v]) => `${k}) ${deepStr(v)}`);
   } else if (raw.A || raw.B || raw.C || raw.D) {
-    // Flat: { A: "...", B: "...", C: "...", D: "..." }
     options = ["A", "B", "C", "D"]
       .filter(k => raw[k] !== undefined)
       .map(k => `${k}) ${deepStr(raw[k])}`);
   }
-
-  // Correct answer
-  const correct =
-    raw.correct_answer ?? raw.correct ?? raw.answer ??
-    raw.right_answer ?? raw.solution ?? null;
-
-  // Explanation
+  const correct     = raw.correct_answer ?? raw.correct ?? raw.answer ?? raw.right_answer ?? raw.solution ?? null;
   const explanation = raw.explanation ?? raw.reason ?? raw.rationale ?? null;
-
   return {
-    question: deepStr(question),
+    question:    deepStr(question),
     options,
-    correct: correct !== null ? deepStr(correct) : null,
+    correct:     correct     !== null ? deepStr(correct)     : null,
     explanation: explanation !== null ? deepStr(explanation) : null,
   };
 }
 
-/**
- * Parse the full quiz API response into an array of normalised question objects.
- * Returns null if nothing quiz-like is found (caller will fall back to raw text).
- */
 function parseQuizData(data) {
   if (!data) return null;
-
-  // Try every possible wrapper
   const arr =
-    (Array.isArray(data) ? data : null) ??
-    (Array.isArray(data.questions) ? data.questions : null) ??
-    (Array.isArray(data.quiz) ? data.quiz : null) ??
-    (Array.isArray(data.items) ? data.items : null) ??
-    (Array.isArray(data.results) ? data.results : null) ??
+    (Array.isArray(data)             ? data             : null) ??
+    (Array.isArray(data.questions)   ? data.questions   : null) ??
+    (Array.isArray(data.quiz)        ? data.quiz        : null) ??
+    (Array.isArray(data.items)       ? data.items       : null) ??
+    (Array.isArray(data.results)     ? data.results     : null) ??
     null;
-
   if (!arr || arr.length === 0) return null;
   return arr.map(parseQuestion);
 }
 
-/**
- * Parse the summary/knowledge-card API response into a display string.
- */
 function parseSummaryData(data) {
   if (!data) return "No summary available.";
   if (typeof data === "string") return data;
-
-  // Direct summary field
   if (typeof data.summary === "string" && data.summary.trim()) return data.summary;
-
-  // Knowledge card nested object
   const kc = data.knowledge_card ?? data.knowledgeCard ?? data.card ?? data;
   if (typeof kc === "object" && kc !== null) {
     const parts = [];
     if (kc.title) parts.push(`📘 ${deepStr(kc.title)}`);
     if (kc.overview || kc.description) parts.push(`\n${deepStr(kc.overview ?? kc.description)}`);
-
     const concepts = kc.key_concepts ?? kc.keyConcepts ?? kc.concepts ?? kc.topics ?? [];
     if (Array.isArray(concepts) && concepts.length) {
       parts.push("\n\n🔑 Key Concepts:");
       concepts.forEach(c => {
-        const label = typeof c === "string" ? c : deepStr(c.concept ?? c.name ?? c.title ?? c);
+        const label  = typeof c === "string" ? c : deepStr(c.concept ?? c.name ?? c.title ?? c);
         const detail = typeof c === "object" ? (c.definition ?? c.description ?? c.explanation ?? "") : "";
         parts.push(`  • ${label}${detail ? `: ${detail}` : ""}`);
       });
     }
-
     const topics = kc.main_topics ?? kc.mainTopics ?? [];
     if (Array.isArray(topics) && topics.length) {
       parts.push("\n\n📌 Main Topics:");
       topics.forEach(t => parts.push(`  • ${deepStr(typeof t === "object" ? (t.topic ?? t.name ?? t) : t)}`));
     }
-
     const points = kc.key_points ?? kc.keyPoints ?? kc.bullet_points ?? [];
     if (Array.isArray(points) && points.length) {
       parts.push("\n\n📝 Key Points:");
       points.forEach(p => parts.push(`  • ${deepStr(p)}`));
     }
-
     if (kc.conclusion || kc.summary_text) {
       parts.push(`\n\n✅ Conclusion:\n${deepStr(kc.conclusion ?? kc.summary_text)}`);
     }
-
     const result = parts.join("\n").trim();
     return result || JSON.stringify(kc, null, 2);
   }
-
-  // Absolute fallback
   return JSON.stringify(data, null, 2);
 }
 
-/**
- * Parse chat / explain response to a plain string.
- */
 function parseChatData(data) {
   if (!data) return "No response received.";
   if (typeof data === "string") return data;
   return deepStr(
     data.response ?? data.explanation ?? data.answer ??
-    data.message ?? data.text ?? data.content ?? data
+    data.message  ?? data.text        ?? data.content ?? data
   );
 }
 
-/* ── timestamp ────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════
+   CHAT HISTORY PARSER
+   GET /ai/chat/history/{lecture_id} may return:
+     A) Array  — [{ role, content, timestamp? }, ...]
+     B) Object — { history: [...], lecture_id: string }
+     C) Object — { messages: [...] }
+   Each item: { role: "user"|"assistant", content: string, timestamp?: string }
+══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Normalise the raw history API response into a flat array of
+ * { role: "user"|"assistant", content: string, timestamp: string|null }
+ */
+function parseHistoryResponse(raw) {
+  if (!raw) return [];
+  // Shape A — direct array
+  const arr =
+    (Array.isArray(raw)              ? raw              : null) ??
+    (Array.isArray(raw.history)      ? raw.history      : null) ??
+    (Array.isArray(raw.messages)     ? raw.messages     : null) ??
+    (Array.isArray(raw.chat_history) ? raw.chat_history : null) ??
+    null;
+  if (!arr || arr.length === 0) return [];
+  return arr
+    .filter(item => item && (item.role === "user" || item.role === "assistant"))
+    .map(item => ({
+      role:      item.role,
+      content:   deepStr(item.content ?? item.message ?? item.text ?? ""),
+      timestamp: item.timestamp ?? item.created_at ?? item.time ?? null,
+    }))
+    .filter(item => item.content.trim() !== "");
+}
+
+/* ── timestamp helpers ────────────────────────────────────────────── */
 const ts = () => {
   const n = new Date();
   return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`;
 };
 
-/* ── Message types ────────────────────────────────────────────────── */
-// type: "text" | "quiz" | "summary"
-// For "quiz": payload = QuizQuestion[]
-// For "text" | "summary": payload = string
+/** Format a timestamp string from the API (ISO or anything Date() accepts) */
+function fmtTime(ts) {
+  if (!ts) return "";
+  try {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return "";
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  } catch { return ""; }
+}
+
+/** Human-readable date label like "Today", "Yesterday", "Mon 14 Apr" */
+function fmtDateLabel(ts) {
+  if (!ts) return "Previous conversation";
+  try {
+    const d     = new Date(ts);
+    const now   = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const day   = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diff  = Math.round((today - day) / 86400000);
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Yesterday";
+    return d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" });
+  } catch { return "Previous conversation"; }
+}
 
 /* ══════════════════════════════════════════════════════════════════════
-   QUIZ MESSAGE RENDERER
-   Renders a nicely structured quiz card instead of raw text.
+   QUIZ MESSAGE RENDERER  (unchanged)
 ══════════════════════════════════════════════════════════════════════ */
 function QuizMessage({ questions }) {
-  const [revealed, setRevealed] = useState({});     // { [idx]: true } when answer shown
-  const [selected, setSelected] = useState({});     // { [idx]: optionIndex }
-
+  const [revealed, setRevealed] = useState({});
+  const [selected, setSelected] = useState({});
   const toggle = (idx) => setRevealed(prev => ({ ...prev, [idx]: !prev[idx] }));
-
   const LETTERS = ["A", "B", "C", "D", "E", "F"];
 
   return (
     <div className="flex flex-col gap-5 w-full">
       {questions.map((q, qi) => {
-        const isRevealed = !!revealed[qi];
+        const isRevealed  = !!revealed[qi];
         const selectedIdx = selected[qi] ?? null;
-
         return (
           <div key={qi} className="flex flex-col gap-3">
-            {/* Question header */}
             <div className="flex items-start gap-2">
               <span className="flex-shrink-0 w-6 h-6 rounded-lg bg-indigo-100 dark:bg-indigo-500/25 text-indigo-700 dark:text-indigo-300 text-[11px] font-black flex items-center justify-center">
                 {qi + 1}
@@ -220,19 +221,17 @@ function QuizMessage({ questions }) {
               </p>
             </div>
 
-            {/* Options */}
             {q.options.length > 0 && (
               <div className="flex flex-col gap-1.5 ml-8">
                 {q.options.map((opt, oi) => {
                   const letter = LETTERS[oi] ?? String(oi + 1);
-                  // Determine colour when revealed
-                  let optCls = "bg-slate-50 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-300";
+                  let optCls   = "bg-slate-50 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-300";
                   if (isRevealed && q.correct) {
-                    const correctLower = q.correct.toLowerCase();
+                    const cl = q.correct.toLowerCase();
                     const isCorrect =
-                      correctLower === letter.toLowerCase() ||
-                      opt.toLowerCase().includes(correctLower) ||
-                      correctLower.includes(opt.toLowerCase().slice(0, 8));
+                      cl === letter.toLowerCase() ||
+                      opt.toLowerCase().includes(cl) ||
+                      cl.includes(opt.toLowerCase().slice(0, 8));
                     if (isCorrect) {
                       optCls = "bg-emerald-50 dark:bg-emerald-500/15 border-emerald-400 dark:border-emerald-500/50 text-emerald-800 dark:text-emerald-300";
                     } else if (selectedIdx === oi) {
@@ -241,7 +240,6 @@ function QuizMessage({ questions }) {
                   } else if (selectedIdx === oi) {
                     optCls = "bg-indigo-50 dark:bg-indigo-500/15 border-indigo-400 dark:border-indigo-500/50 text-indigo-800 dark:text-indigo-200";
                   }
-
                   return (
                     <button key={oi}
                       onClick={() => !isRevealed && setSelected(prev => ({ ...prev, [qi]: oi }))}
@@ -256,15 +254,12 @@ function QuizMessage({ questions }) {
               </div>
             )}
 
-            {/* Reveal / Answer row */}
             <div className="ml-8 flex flex-col gap-1.5">
-              <button
-                onClick={() => toggle(qi)}
+              <button onClick={() => toggle(qi)}
                 className="self-start inline-flex items-center gap-1.5 text-[11px] sm:text-[12px] font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer border-0 bg-transparent p-0 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors">
                 <CheckCircle size={12} />
                 {isRevealed ? "Hide Answer" : "Show Answer"}
               </button>
-
               <AnimatePresence>
                 {isRevealed && (
                   <motion.div
@@ -273,27 +268,60 @@ function QuizMessage({ questions }) {
                     exit={{ opacity: 0, height: 0 }}
                     className="flex flex-col gap-1 overflow-hidden">
                     {q.correct && (
-                      <p className="text-[12px] font-bold text-emerald-700 dark:text-emerald-400">
-                        ✅ Correct: {q.correct}
-                      </p>
+                      <p className="text-[12px] font-bold text-emerald-700 dark:text-emerald-400">✅ Correct: {q.correct}</p>
                     )}
                     {q.explanation && (
-                      <p className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                        💡 {q.explanation}
-                      </p>
+                      <p className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">💡 {q.explanation}</p>
                     )}
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
 
-            {/* Divider between questions */}
-            {qi < questions.length - 1 && (
-              <div className="border-t border-slate-100 dark:border-white/6 mt-1" />
-            )}
+            {qi < questions.length - 1 && <div className="border-t border-slate-100 dark:border-white/6 mt-1" />}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   DATE SEPARATOR  — WhatsApp-style pill between history and new messages
+══════════════════════════════════════════════════════════════════════ */
+function DateSeparator({ label }) {
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <div className="flex-1 h-px bg-slate-200 dark:bg-white/8" />
+      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-[#070b16] px-2.5 py-1 rounded-full border border-slate-200 dark:border-white/8 flex-shrink-0 select-none">
+        <Clock size={10} />
+        {label}
+      </span>
+      <div className="flex-1 h-px bg-slate-200 dark:bg-white/8" />
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   HISTORY LOADING SKELETON
+══════════════════════════════════════════════════════════════════════ */
+function HistorySkeleton() {
+  return (
+    <div className="flex flex-col gap-3 py-2">
+      {/* 2 user + 2 assistant placeholders */}
+      {[
+        { user: false, w: "w-[55%]" },
+        { user: true,  w: "w-[42%]" },
+        { user: false, w: "w-[62%]" },
+        { user: true,  w: "w-[35%]" },
+      ].map((s, i) => (
+        <div key={i} className={`flex items-end gap-2 ${s.user ? "justify-end" : "justify-start"}`}>
+          {!s.user && (
+            <div className="w-7 h-7 rounded-xl flex-shrink-0 bg-slate-200 dark:bg-white/8 animate-pulse" />
+          )}
+          <div className={`${s.w} h-10 rounded-2xl bg-slate-200 dark:bg-white/8 animate-pulse`} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -306,56 +334,136 @@ function ChatContent() {
   const params = useSearchParams();
   const { logout } = useAuth();
   const { dark, toggleTheme } = useTheme();
-  const streamRef = useRef(null);
+  const streamRef    = useRef(null);
+  const bottomRef    = useRef(null);      // anchor for scroll-to-bottom after history loads
 
   /* URL params */
   const subjectId = params.get("subject") || "";
   const lectureId = params.get("lecture") || "";
-  const backPath = subjectId ? `/subjects/${subjectId}` : "/subjects";
+  const backPath  = subjectId ? `/subjects/${subjectId}` : "/subjects";
 
-  /* State */
+  /* ── Core state ───────────────────────────────────────────────── */
   const [lectureTitle, setLectureTitle] = useState(params.get("name") || "");
   const [lectureReady, setLectureReady] = useState(false);
-  const [activeTab, setActiveTab] = useState("chat");
-  const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
-  const [tabLoading, setTabLoading] = useState(false);
-  const [tabError, setTabError] = useState("");
+  const [activeTab,    setActiveTab]    = useState("chat");
+  const [input,        setInput]        = useState("");
+  const [sending,      setSending]      = useState(false);
+  const [tabLoading,   setTabLoading]   = useState(false);
+  const [tabError,     setTabError]     = useState("");
 
-  /* History for the backend (role/content pairs) */
+  /* ── History state ────────────────────────────────────────────── */
+  const [historyLoading, setHistoryLoading]  = useState(false);
+  const [historyLoaded,  setHistoryLoaded]   = useState(false);  // true once attempted (even if empty)
+
+  /**
+   * historyMessages — display messages loaded from GET /ai/chat/history/{id}
+   * Kept separate from `messages` so they always appear first and
+   * can be styled differently (slightly muted).
+   * Shape: { id, role, type:"text", payload: string, time: string, _fromHistory: true }
+   */
+  const [historyMessages, setHistoryMessages] = useState([]);
+
+  /**
+   * historyDateLabel — label shown in the date-separator pill
+   * e.g. "Yesterday", "Mon 14 Apr", "Today"
+   */
+  const [historyDateLabel, setHistoryDateLabel] = useState("Previous conversation");
+
+  /**
+   * history — array of { role, content } pairs sent to /ai/chat
+   * Pre-seeded with the loaded history so AI has full context.
+   */
   const [history, setHistory] = useState([]);
 
-  /* Messages for display — each has: { id, role, type, payload, time }
-     type: "text" | "quiz" | "summary"
-     payload: string (text/summary) | QuizQuestion[] (quiz)          */
-  const [messages, setMessages] = useState([{
-    id: "m0",
-    role: "assistant",
-    type: "text",
-    payload: "Hello! I'm your AI assistant. Switch tabs to get a summary, quiz, or just ask me anything about this lecture.",
-    time: ts(),
-  }]);
+  /**
+   * messages — new messages created in THIS session
+   * Starts with the welcome message ONLY when there is no history.
+   * When history exists, welcome message is suppressed.
+   */
+  const [messages, setMessages] = useState([]);
 
-  /* Load lecture title from API on mount */
+  /* ── Load lecture title + chat history on mount ───────────────── */
   useEffect(() => {
     if (!lectureId) return;
+
+    /* Run both fetches in parallel */
     (async () => {
+      /* 1. Lecture title */
       try {
         const lec = await apiGetLecture(lectureId);
         setLectureTitle(lec.title ?? lec.name ?? "");
       } catch { /* keep URL param fallback */ }
       finally { setLectureReady(true); }
     })();
+
+    /* 2. Chat history */
+    (async () => {
+      setHistoryLoading(true);
+      try {
+        const raw      = await apiGetChatHistory(lectureId);
+        const parsed   = parseHistoryResponse(raw);
+
+        if (parsed.length === 0) {
+          /* No previous history — show welcome message */
+          setMessages([{
+            id:      "welcome",
+            role:    "assistant",
+            type:    "text",
+            payload: "Hello! I'm your AI assistant. Switch tabs to get a summary, quiz, or just ask me anything about this lecture.",
+            time:    ts(),
+          }]);
+          setHistoryLoaded(true);
+          return;
+        }
+
+        /* Date label from the FIRST message timestamp */
+        setHistoryDateLabel(fmtDateLabel(parsed[0].timestamp));
+
+        /* Convert to display messages */
+        const displayMsgs = parsed.map((item, i) => ({
+          id:           `hist-${i}-${item.role}`,
+          role:         item.role,
+          type:         "text",
+          payload:      item.content,
+          time:         fmtTime(item.timestamp) || "",
+          _fromHistory: true,
+        }));
+        setHistoryMessages(displayMsgs);
+
+        /* Seed history for AI context — last 20 turns max to stay within token limits */
+        const contextPairs = parsed.slice(-20).map(item => ({
+          role:    item.role,
+          content: item.content,
+        }));
+        setHistory(contextPairs);
+
+        /* No welcome message when history exists — session messages start empty */
+        setMessages([]);
+
+      } catch {
+        /* History fetch failed (404 or network) — still show welcome */
+        setMessages([{
+          id:      "welcome",
+          role:    "assistant",
+          type:    "text",
+          payload: "Hello! I'm your AI assistant. Switch tabs to get a summary, quiz, or just ask me anything about this lecture.",
+          time:    ts(),
+        }]);
+      } finally {
+        setHistoryLoaded(true);
+        setHistoryLoading(false);
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lectureId]);
 
-  /* Auto-scroll */
+  /* ── Auto-scroll: after history loads + after every new message ── */
   useEffect(() => {
     const el = streamRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, sending, tabLoading]);
+  }, [messages, historyMessages, historyLoaded, sending, tabLoading]);
 
-  /* Add a message */
+  /* ── Add a new session message ────────────────────────────────── */
   const addMsg = useCallback((role, type, payload) => {
     setMessages(prev => [
       ...prev,
@@ -363,27 +471,27 @@ function ChatContent() {
     ]);
   }, []);
 
-  /* Tabs */
+  /* ── Tabs (unchanged) ─────────────────────────────────────────── */
   const tabs = [
-    { id: "chat", icon: <Sparkles size={14} />, label: "Chat", shortLabel: "Chat" },
-    { id: "explain", icon: <BookOpen size={14} />, label: "Explain", shortLabel: "Explain" },
-    { id: "summary", icon: <FileText size={14} />, label: "Summary", shortLabel: "Summary" },
-    { id: "mcq", icon: <HelpCircle size={14} />, label: "MCQ Quiz", shortLabel: "MCQ" },
+    { id: "chat",    icon: <Sparkles size={14} />,   label: "Chat",    shortLabel: "Chat"    },
+    { id: "explain", icon: <BookOpen size={14} />,    label: "Explain", shortLabel: "Explain" },
+    { id: "summary", icon: <FileText size={14} />,    label: "Summary", shortLabel: "Summary" },
+    { id: "mcq",     icon: <HelpCircle size={14} />,  label: "MCQ Quiz",shortLabel: "MCQ"     },
   ];
 
   const tabLabel = useMemo(
     () => tabs.find(t => t.id === activeTab)?.label ?? "Chat",
-    [activeTab] // eslint-disable-line react-hooks/exhaustive-deps
+    [activeTab], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const suggested = useMemo(() => ({
-    chat: "What are the most important concepts in this lecture?",
+    chat:    "What are the most important concepts in this lecture?",
     explain: "Explain the core concepts of this lecture in simple terms.",
     summary: "Summarise this lecture for me.",
-    mcq: "Generate a multiple choice quiz from this lecture.",
+    mcq:     "Generate a multiple choice quiz from this lecture.",
   }[activeTab]), [activeTab]);
 
-  /* Tab switch — auto-fetch for summary & mcq */
+  /* ── Tab switch — auto-fetch for summary & mcq (unchanged) ───── */
   const handleTabChange = useCallback(async (tabId) => {
     setActiveTab(tabId);
     setTabError("");
@@ -394,17 +502,12 @@ function ChatContent() {
     try {
       if (tabId === "summary") {
         const data = await apiGetSummary(lectureId);
-        const text = parseSummaryData(data);
-        addMsg("assistant", "summary", text);
+        addMsg("assistant", "summary", parseSummaryData(data));
       } else {
-        const data = await apiGenerateQuiz(lectureId);
+        const data      = await apiGenerateQuiz(lectureId);
         const questions = parseQuizData(data);
-        if (questions) {
-          addMsg("assistant", "quiz", questions);
-        } else {
-          // Fallback: couldn't parse as quiz → show raw text
-          addMsg("assistant", "text", parseChatData(data));
-        }
+        if (questions) addMsg("assistant", "quiz", questions);
+        else           addMsg("assistant", "text", parseChatData(data));
       }
     } catch (err) {
       setTabError(err.message || "Failed to load. Please try again.");
@@ -413,7 +516,7 @@ function ChatContent() {
     }
   }, [lectureId, addMsg]);
 
-  /* Send message */
+  /* ── Send message (unchanged logic, history already seeded) ──── */
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || sending || tabLoading) return;
@@ -429,10 +532,8 @@ function ChatContent() {
       if (activeTab === "explain") {
         data = await apiExplain({ concept: text, lecture_id: lectureId });
       } else {
-        // chat / summary / mcq — all route to chat for follow-up messages
         data = await apiChat({ message: text, lecture_id: lectureId, history });
       }
-
       const reply = parseChatData(data);
       addMsg("assistant", "text", reply);
       setHistory([...userHistory, { role: "assistant", content: reply }]);
@@ -457,7 +558,7 @@ function ChatContent() {
     "hover:text-slate-900 dark:hover:text-white shadow-sm",
   ].join(" ");
 
-  /* Guard — no lectureId */
+  /* ── Guard — no lectureId ─────────────────────────────────────── */
   if (!lectureId) {
     return (
       <div className="flex flex-col items-center justify-center h-screen gap-4 bg-slate-50 dark:bg-[#070b16] text-slate-500 dark:text-slate-400">
@@ -471,12 +572,82 @@ function ChatContent() {
     );
   }
 
+  /* ── Combine all messages for rendering ──────────────────────── */
+  /* Order: [history msgs] → [date separator] → [session msgs] */
+  const hasHistory      = historyMessages.length > 0;
+  const hasSessionMsgs  = messages.length > 0;
+
+  /* ── Shared bubble renderer ───────────────────────────────────── */
+  function MsgBubble({ m }) {
+    const isUser = m.role === "user";
+    const isQuiz = m.type === "quiz" && Array.isArray(m.payload);
+    const isFaded = !!m._fromHistory;   // slightly muted for old messages
+
+    return (
+      <motion.div
+        key={m.id}
+        initial={{ opacity: 0, y: 14, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0,   scale: 1    }}
+        transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+        className={`flex items-end gap-2 sm:gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
+
+        {/* Brain avatar — assistant only */}
+        {!isUser && (
+          <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex-shrink-0 grid place-items-center text-[13px] tc border shadow-sm self-start mt-0.5
+            ${isFaded
+              ? "bg-slate-100 dark:bg-white/6 border-slate-200 dark:border-white/8 opacity-70"
+              : "bg-indigo-100 dark:bg-indigo-500/20 border-indigo-200 dark:border-indigo-500/30"}`}>
+            🧠
+          </div>
+        )}
+
+        {/* Bubble */}
+        <div className={[
+          isUser
+            ? "max-w-[75vw] sm:max-w-[min(560px,72vw)]"
+            : isQuiz
+              ? "w-full max-w-[min(760px,92vw)]"
+              : "max-w-[75vw] sm:max-w-[min(660px,78vw)]",
+          "rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3",
+          "text-[13px] sm:text-[14px] leading-[1.65]",
+          isUser
+            ? isFaded
+              ? "bg-[#6d5efc]/70 text-white/90 shadow-[0_4px_16px_rgba(109,94,252,0.20)] rounded-br-sm"
+              : "bg-[#6d5efc] text-white shadow-[0_6px_24px_rgba(109,94,252,0.30)] rounded-br-sm"
+            : isFaded
+              ? "bg-slate-50 dark:bg-white/4 border border-slate-200 dark:border-white/6 text-slate-600 dark:text-gray-400 shadow-none rounded-bl-sm tc"
+              : "bg-white dark:bg-[#0f172a] border border-slate-200 dark:border-white/8 text-slate-800 dark:text-gray-200 shadow-[0_2px_12px_rgba(0,0,0,0.06)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.40)] rounded-bl-sm tc",
+        ].join(" ")}>
+
+          {isQuiz
+            ? <QuizMessage questions={m.payload} />
+            : <div className="whitespace-pre-wrap">{m.payload}</div>
+          }
+
+          {m.time && (
+            <div className={`mt-1.5 sm:mt-2 text-[10px] sm:text-[11px] flex items-center gap-1
+              ${isUser ? "text-white/50 justify-end" : "text-slate-400 dark:text-gray-600 tc"}`}>
+              {isFaded && <Clock size={9} className="flex-shrink-0" />}
+              {m.time}
+            </div>
+          )}
+        </div>
+
+        {/* "You" label — user only */}
+        {isUser && (
+          <div className="text-[11px] sm:text-[12px] flex-shrink-0 text-slate-400 dark:text-gray-500 tc self-end mb-1">
+            You
+          </div>
+        )}
+      </motion.div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen h-dvh overflow-hidden tc bg-slate-50 dark:bg-[#070b16] text-slate-900 dark:text-gray-100">
 
-      {/* ── HEADER ────────────────────────────────────────────────── */}
+      {/* ── HEADER ─────────────────────────────────────────────────── */}
       <header className="flex-shrink-0 tc bg-white/95 dark:bg-[#070b16]/92 backdrop-blur-xl border-b border-slate-200 dark:border-white/8 shadow-sm dark:shadow-none">
-
         <div className="max-w-[1100px] mx-auto px-3 sm:px-5 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-3">
           <motion.button whileHover={{ x: -2 }} whileTap={{ scale: 0.90 }}
             onClick={() => router.push(backPath)} title="Back" className={iconBtn}>
@@ -488,10 +659,10 @@ function ChatContent() {
               {lectureTitle || (lectureReady ? "Lecture" : "Loading…")}
             </div>
             <div className="text-[11px] sm:text-[12px] mt-0.5 text-slate-400 dark:text-gray-500 tc">
-              {activeTab === "chat" && "Conversational AI tutor"}
+              {activeTab === "chat"    && "Conversational AI tutor"}
               {activeTab === "explain" && "Concept explanation mode"}
               {activeTab === "summary" && "Lecture knowledge card"}
-              {activeTab === "mcq" && "Auto-generated quiz"}
+              {activeTab === "mcq"     && "Auto-generated quiz"}
             </div>
           </div>
 
@@ -500,8 +671,8 @@ function ChatContent() {
               <AnimatePresence mode="wait" initial={false}>
                 <motion.span key={dark ? "sun" : "moon"}
                   initial={{ rotate: -35, opacity: 0, scale: 0.75 }}
-                  animate={{ rotate: 0, opacity: 1, scale: 1 }}
-                  exit={{ rotate: 35, opacity: 0, scale: 0.75 }}
+                  animate={{ rotate:   0, opacity: 1, scale: 1    }}
+                  exit={{    rotate:  35, opacity: 0, scale: 0.75 }}
                   transition={{ duration: 0.18 }}
                   className="flex items-center justify-center">
                   {dark ? <Sun size={15} /> : <Moon size={15} />}
@@ -536,9 +707,9 @@ function ChatContent() {
         </div>
       </header>
 
-      {/* ── MESSAGES ─────────────────────────────────────────────── */}
+      {/* ── MESSAGES ───────────────────────────────────────────────── */}
       <div ref={streamRef} className="flex-1 overflow-y-auto">
-        <div className="max-w-[860px] mx-auto px-3 sm:px-5 py-4 sm:py-6 flex flex-col gap-4 sm:gap-5">
+        <div className="max-w-[860px] mx-auto px-3 sm:px-5 py-4 sm:py-6 flex flex-col gap-3 sm:gap-4">
 
           {/* Error banner */}
           <AnimatePresence>
@@ -556,61 +727,31 @@ function ChatContent() {
             )}
           </AnimatePresence>
 
-          {/* Message bubbles */}
+          {/* ── HISTORY LOADING SKELETON ─── */}
+          {historyLoading && <HistorySkeleton />}
+
+          {/* ── PREVIOUS MESSAGES (from /ai/chat/history/{id}) ─────── */}
           <AnimatePresence initial={false}>
-            {messages.map(m => {
-              const isUser = m.role === "user";
-              const isQuiz = m.type === "quiz" && Array.isArray(m.payload);
+            {!historyLoading && hasHistory && historyMessages.map(m => (
+              <MsgBubble key={m.id} m={m} />
+            ))}
+          </AnimatePresence>
 
-              return (
-                <motion.div key={m.id}
-                  initial={{ opacity: 0, y: 16, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                  className={`flex items-end gap-2 sm:gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
+          {/* ── DATE SEPARATOR — between history and new session ───── */}
+          {!historyLoading && hasHistory && historyLoaded && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.1 }}>
+              <DateSeparator label={historyDateLabel} />
+            </motion.div>
+          )}
 
-                  {/* Brain avatar — assistant only */}
-                  {!isUser && (
-                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl flex-shrink-0 grid place-items-center text-[13px] tc bg-indigo-100 dark:bg-indigo-500/20 border border-indigo-200 dark:border-indigo-500/30 shadow-sm self-start mt-0.5">
-                      🧠
-                    </div>
-                  )}
-
-                  {/* Bubble */}
-                  <div className={[
-                    isUser
-                      ? "max-w-[75vw] sm:max-w-[min(560px,72vw)]"
-                      : isQuiz
-                        ? "w-full max-w-[min(760px,92vw)]"   // quiz gets wider bubble
-                        : "max-w-[75vw] sm:max-w-[min(660px,78vw)]",
-                    "rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3",
-                    "text-[13px] sm:text-[14px] leading-[1.65]",
-                    isUser
-                      ? "bg-[#6d5efc] text-white shadow-[0_6px_24px_rgba(109,94,252,0.30)] rounded-br-sm"
-                      : "bg-white dark:bg-[#0f172a] border border-slate-200 dark:border-white/8 text-slate-800 dark:text-gray-200 shadow-[0_2px_12px_rgba(0,0,0,0.06)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.40)] rounded-bl-sm tc",
-                  ].join(" ")}>
-
-                    {/* Content */}
-                    {isQuiz
-                      ? <QuizMessage questions={m.payload} />
-                      : <div className="whitespace-pre-wrap">{m.payload}</div>
-                    }
-
-                    {/* Timestamp */}
-                    <div className={`mt-1.5 sm:mt-2 text-[10px] sm:text-[11px] ${isUser ? "text-white/60" : "text-slate-400 dark:text-gray-600 tc"}`}>
-                      {m.time}
-                    </div>
-                  </div>
-
-                  {/* "You" label — user only */}
-                  {isUser && (
-                    <div className="text-[11px] sm:text-[12px] flex-shrink-0 text-slate-400 dark:text-gray-500 tc self-end mb-1">
-                      You
-                    </div>
-                  )}
-                </motion.div>
-              );
-            })}
+          {/* ── SESSION MESSAGES (new messages this visit) ─────────── */}
+          <AnimatePresence initial={false}>
+            {messages.map(m => (
+              <MsgBubble key={m.id} m={m} />
+            ))}
           </AnimatePresence>
 
           {/* Typing indicator */}
@@ -636,10 +777,13 @@ function ChatContent() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          {/* Scroll anchor */}
+          <div ref={bottomRef} />
         </div>
       </div>
 
-      {/* ── COMPOSER ─────────────────────────────────────────────── */}
+      {/* ── COMPOSER ───────────────────────────────────────────────── */}
       <div className="flex-shrink-0 tc border-t border-slate-200 dark:border-white/8 bg-white dark:bg-[#070b16]">
         <div className="max-w-[860px] mx-auto px-3 sm:px-5 py-3 sm:py-4">
 
