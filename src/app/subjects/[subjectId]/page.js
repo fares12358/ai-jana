@@ -13,16 +13,15 @@ import { useSubjects } from "@/hooks/useSubjects";
 import RequireAuth from "@/components/RequireAuth";
 import { apiUploadPdf, apiUploadVideo } from "@/utils/api";
 
-/* ── Colour palette ───────────────────────────────────────────────── */
 const LECTURE_COLORS = [
-  { bg: "bg-indigo-100 dark:bg-indigo-500/20", icon: "text-indigo-600 dark:text-indigo-300" },
-  { bg: "bg-purple-100 dark:bg-purple-500/20", icon: "text-purple-600 dark:text-purple-300" },
-  { bg: "bg-emerald-100 dark:bg-emerald-500/20", icon: "text-emerald-600 dark:text-emerald-300" },
-  { bg: "bg-amber-100 dark:bg-amber-500/20", icon: "text-amber-600 dark:text-amber-300" },
-  { bg: "bg-pink-100 dark:bg-pink-500/20", icon: "text-pink-600 dark:text-pink-300" },
-  { bg: "bg-blue-100 dark:bg-blue-500/20", icon: "text-blue-600 dark:text-blue-300" },
+  { bg: "bg-indigo-100 dark:bg-indigo-500/20",  icon: "text-indigo-600 dark:text-indigo-300" },
+  { bg: "bg-purple-100 dark:bg-purple-500/20",  icon: "text-purple-600 dark:text-purple-300" },
+  { bg: "bg-emerald-100 dark:bg-emerald-500/20",icon: "text-emerald-600 dark:text-emerald-300"},
+  { bg: "bg-amber-100 dark:bg-amber-500/20",    icon: "text-amber-600 dark:text-amber-300"   },
+  { bg: "bg-pink-100 dark:bg-pink-500/20",      icon: "text-pink-600 dark:text-pink-300"     },
+  { bg: "bg-blue-100 dark:bg-blue-500/20",      icon: "text-blue-600 dark:text-blue-300"     },
 ];
-const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.07 } } };
+const stagger  = { hidden: {}, show: { transition: { staggerChildren: 0.07 } } };
 const cardAnim = { hidden: { opacity: 0, y: 22 }, show: { opacity: 1, y: 0, transition: { duration: 0.38, ease: [0.22, 1, 0.36, 1] } } };
 
 /* ── Status badge ─────────────────────────────────────────────────── */
@@ -30,7 +29,7 @@ function StatusBadge({ status }) {
   if (!status || status === "completed") return null;
   const map = {
     processing: { label: "Processing…", cls: "bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300", icon: <Loader2 size={11} className="animate-spin" /> },
-    failed: { label: "Failed", cls: "bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-300", icon: null },
+    failed:     { label: "Failed",       cls: "bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-300",         icon: null },
   };
   const info = map[status];
   if (!info) return null;
@@ -47,8 +46,7 @@ function DeleteLectureModal({ open, lectureName, onConfirm, onCancel, deleting }
     <AnimatePresence>
       {open && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[110] flex items-center justify-center p-4"
-          onClick={onCancel}>
+          className="fixed inset-0 z-[110] flex items-center justify-center p-4" onClick={onCancel}>
           <div className="absolute inset-0 bg-slate-900/50 dark:bg-black/70 backdrop-blur-sm" />
           <motion.div
             initial={{ opacity: 0, scale: 0.93, y: 12 }}
@@ -86,18 +84,18 @@ function DeleteLectureModal({ open, lectureName, onConfirm, onCancel, deleting }
 /* ── Add Lecture Modal ────────────────────────────────────────────── */
 function AddLectureModal({ open, onClose, onAdd }) {
   const fileRef = useRef(null);
-  const [name, setName] = useState("");
-  const [video, setVideo] = useState("");
-  const [file, setFile] = useState(null);
-  const [error, setError] = useState("");
-  const [dragging, setDragging] = useState(false);
+  const [name,       setName]       = useState("");
+  const [video,      setVideo]      = useState("");
+  const [file,       setFile]       = useState(null);
+  const [error,      setError]      = useState("");
+  const [dragging,   setDragging]   = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [uploadPct, setUploadPct] = useState(0);
-  const [phase, setPhase] = useState("");
+  const [uploadPct,  setUploadPct]  = useState(0);
+  const [phase,      setPhase]      = useState("");
 
-  const reset = () => { setName(""); setVideo(""); setFile(null); setError(""); setDragging(false); setUploadPct(0); setPhase(""); };
+  const reset       = () => { setName(""); setVideo(""); setFile(null); setError(""); setDragging(false); setUploadPct(0); setPhase(""); };
   const handleClose = () => { if (submitting) return; reset(); onClose(); };
-  const handleFile = (f) => {
+  const handleFile  = (f) => {
     if (!f) return;
     if (!f.name.match(/\.(pdf|mp4|webm|mp3|wav|txt|docx)$/i)) { setError("Unsupported file type"); return; }
     setFile(f); setError("");
@@ -106,15 +104,15 @@ function AddLectureModal({ open, onClose, onAdd }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!name.trim()) { setError("Lecture name is required"); return; }
-    if (!file && !video.trim()) { setError("Add a file or a video link (or both)"); return; }
+    if (!name.trim())              { setError("Lecture name is required"); return; }
+    if (!file && !video.trim())    { setError("Add a file or a video link (or both)"); return; }
     setSubmitting(true); setError(""); setPhase("creating");
     try {
-      const created = await onAdd({ title: name.trim(), description: "" });
+      const created   = await onAdd({ title: name.trim(), description: "" });
       const lectureId = created?.id ?? created?._id;
       if (lectureId) {
         setPhase("uploading");
-        if (file) await apiUploadPdf(lectureId, file, (pct) => setUploadPct(pct));
+        if (file)        await apiUploadPdf(lectureId, file, (pct) => setUploadPct(pct));
         if (video.trim()) await apiUploadVideo(lectureId, { url: video.trim(), extract_frames: false });
       }
       reset(); onClose();
@@ -160,7 +158,6 @@ function AddLectureModal({ open, onClose, onAdd }) {
             )}
 
             <form onSubmit={handleSubmit} className="px-6 py-5 flex flex-col gap-4">
-              {/* Name */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-[12px] font-bold text-slate-700 dark:text-gray-300 flex items-center gap-1.5 tc">
                   <BookOpen size={13} className="text-indigo-500" />Lecture Name <span className="text-red-500">*</span>
@@ -170,7 +167,6 @@ function AddLectureModal({ open, onClose, onAdd }) {
                   className={`w-full px-3.5 py-2.5 rounded-xl text-[14px] outline-none tc text-slate-900 dark:text-gray-100 placeholder:text-slate-400 dark:placeholder:text-gray-600 bg-slate-50 dark:bg-white/6 border ${error && !name.trim() ? "border-red-400 dark:border-red-400/70" : "border-slate-200 dark:border-white/10"} focus:border-indigo-400 dark:focus:border-indigo-500/70 focus:shadow-[0_0_0_3px_rgba(99,102,241,0.12)] disabled:opacity-60`} />
               </div>
 
-              {/* Video */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-[12px] font-bold text-slate-700 dark:text-gray-300 flex items-center gap-1.5 tc">
                   <Video size={13} className="text-indigo-500" />Video Link
@@ -184,7 +180,6 @@ function AddLectureModal({ open, onClose, onAdd }) {
                 </div>
               </div>
 
-              {/* File */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-[12px] font-bold text-slate-700 dark:text-gray-300 flex items-center gap-1.5 tc">
                   <Upload size={13} className="text-indigo-500" />Upload File
@@ -218,7 +213,6 @@ function AddLectureModal({ open, onClose, onAdd }) {
                 )}
               </div>
 
-              {/* Both-allowed hint */}
               {(file || video.trim()) && (
                 <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
                   className="flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-100 dark:border-indigo-500/20 text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold">
@@ -258,40 +252,36 @@ function AddLectureModal({ open, onClose, onAdd }) {
    SUBJECT DETAIL PAGE
 ══════════════════════════════════════════════════════════════════════ */
 function SubjectDetailContent() {
-  const router = useRouter();
-  const { subjectId } = useParams();
-  const { logout } = useAuth();
+  const router                = useRouter();
+  const { subjectId }         = useParams();
+  const { logout }            = useAuth();
   const { dark, toggleTheme } = useTheme();
   const { lectures, loading, error, addLecture, removeLecture, refresh } = useLectures(subjectId);
-  const { subjects } = useSubjects();
-  const subject = subjects.find(s => String(s.id ?? s._id) === String(subjectId));
-  const subjectName = subject?.name ?? "Subject";
+  const { subjects }          = useSubjects();
+  const subject               = subjects.find(s => String(s.id ?? s._id) === String(subjectId));
+  const subjectName           = subject?.name ?? "Subject";
 
-  const [modalOpen, setModalOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null); // { id, name }
-  const [deleting, setDeleting] = useState(false);
+  const [modalOpen,    setModalOpen]    = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting,     setDeleting]     = useState(false);
 
   const iconBtn = "w-9 h-9 rounded-xl grid place-items-center cursor-pointer tc bg-white dark:bg-white/8 border border-slate-200 dark:border-white/10 text-slate-500 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white shadow-sm transition-colors";
 
   const openChat = (lecture) => {
-    const params = new URLSearchParams({
+    const p = new URLSearchParams({
       subject: subjectId,
       lecture: lecture.id ?? lecture._id ?? "",
-      name: lecture.title ?? lecture.name ?? "",
+      name:    lecture.title ?? lecture.name ?? "",
     });
-    router.push(`/chat?${params.toString()}`);
+    router.push(`/chat?${p.toString()}`);
   };
 
   const confirmDeleteLecture = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
-    try {
-      await removeLecture(deleteTarget.id);
-    } catch { /* error handled in hook */ }
-    finally {
-      setDeleting(false);
-      setDeleteTarget(null);
-    }
+    try { await removeLecture(deleteTarget.id); }
+    catch { /* error handled in hook */ }
+    finally { setDeleting(false); setDeleteTarget(null); }
   };
 
   return (
@@ -348,7 +338,7 @@ function SubjectDetailContent() {
         {/* Loading skeleton */}
         {loading && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-            {[1, 2, 3].map(i => <div key={i} className="h-[130px] rounded-2xl animate-pulse tc bg-slate-200 dark:bg-white/8" />)}
+            {[1,2,3].map(i => <div key={i} className="h-[130px] rounded-2xl animate-pulse tc bg-slate-200 dark:bg-white/8" />)}
           </div>
         )}
 
@@ -367,10 +357,10 @@ function SubjectDetailContent() {
         {!loading && !error && (
           <motion.section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4" variants={stagger} initial="hidden" animate="show">
             {lectures.map((l, idx) => {
-              const c = LECTURE_COLORS[idx % LECTURE_COLORS.length];
+              const c            = LECTURE_COLORS[idx % LECTURE_COLORS.length];
               const isProcessing = l.status === "processing";
-              const isClickable = !isProcessing && !l._pending;
-              const lid = l.id ?? l._id;
+              const isClickable  = !isProcessing && !l._pending;
+              const lid          = l.id ?? l._id;
 
               return (
                 <motion.div key={lid ?? idx} variants={cardAnim}
@@ -388,12 +378,12 @@ function SubjectDetailContent() {
                       <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl grid place-items-center flex-shrink-0 bg-white/70 dark:bg-black/20 tc">
                         {l.description?.startsWith("http") ? <Play size={17} className={c.icon} /> : <FileText size={17} className={c.icon} />}
                       </div>
-                      <div className="min-w-0 flex-1 pr-6">
+                      <div className="min-w-0 flex-1 pr-8">
                         <div className="font-black text-[14px] sm:text-[15px] leading-tight truncate tc text-slate-900 dark:text-white">
                           {l.title ?? l.name}
                         </div>
                         <div className="text-[11px] mt-0.5 tc text-slate-500 dark:text-gray-400">
-                          {new Date(l.created_at ?? l.createdAt ?? Date.now()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                          {new Date(l.created_at ?? l.createdAt ?? Date.now()).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" })}
                         </div>
                       </div>
                     </div>
@@ -414,10 +404,15 @@ function SubjectDetailContent() {
                     </div>
                   </button>
 
-                  {/* Delete button — top-right corner, shows on hover */}
+                  {/* Delete button
+                      Mobile  (< sm): always visible — touch has no hover
+                      Desktop (≥ sm): hidden by default, revealed on group-hover */}
                   <button
                     onClick={() => setDeleteTarget({ id: lid, name: l.title ?? l.name ?? "Untitled" })}
-                    className="absolute top-3 right-3 w-7 h-7 rounded-lg grid place-items-center cursor-pointer border-0 z-10 opacity-0 group-hover:opacity-100 transition-all duration-150 bg-red-50 dark:bg-red-500/15 text-red-400 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/25 hover:text-red-600 dark:hover:text-red-300">
+                    className="absolute top-3 right-3 w-7 h-7 rounded-lg grid place-items-center cursor-pointer border-0 z-10 transition-all duration-150
+                               bg-red-50 dark:bg-red-500/15 text-red-400 dark:text-red-400
+                               hover:bg-red-100 dark:hover:bg-red-500/25 hover:text-red-600 dark:hover:text-red-300
+                               sm:opacity-0 sm:group-hover:opacity-100">
                     <Trash2 size={13} />
                   </button>
                 </motion.div>
@@ -459,7 +454,6 @@ function SubjectDetailContent() {
       </main>
 
       <AddLectureModal open={modalOpen} onClose={() => setModalOpen(false)} onAdd={addLecture} />
-
       <DeleteLectureModal
         open={!!deleteTarget}
         lectureName={deleteTarget?.name ?? ""}

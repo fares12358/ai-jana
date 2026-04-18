@@ -163,7 +163,7 @@ function SubjectsContent() {
   const { subjects, loading, error, addSubject, removeSubject, refresh } = useSubjects();
 
   const [modalOpen,    setModalOpen]    = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null); // { id, name }
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting,     setDeleting]     = useState(false);
 
   const iconBtn = "w-8 h-8 sm:w-9 sm:h-9 rounded-xl grid place-items-center cursor-pointer tc bg-white dark:bg-white/8 border border-slate-200 dark:border-white/10 text-slate-500 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white shadow-sm transition-colors";
@@ -171,13 +171,9 @@ function SubjectsContent() {
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
-    try {
-      await removeSubject(deleteTarget.id);
-    } catch { /* error shown in hook */ }
-    finally {
-      setDeleting(false);
-      setDeleteTarget(null);
-    }
+    try { await removeSubject(deleteTarget.id); }
+    catch { /* error shown in hook */ }
+    finally { setDeleting(false); setDeleteTarget(null); }
   };
 
   return (
@@ -212,14 +208,12 @@ function SubjectsContent() {
           </motion.button>
         </div>
 
-        {/* Loading skeletons */}
         {loading && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
             {[1,2,3].map(i => <div key={i} className="h-[78px] rounded-2xl animate-pulse tc bg-slate-200 dark:bg-white/8" />)}
           </div>
         )}
 
-        {/* Error */}
         {!loading && error && (
           <div className="flex flex-col items-center gap-3 py-12 text-center">
             <p className="text-[14px] text-red-500 dark:text-red-400 font-semibold">{error}</p>
@@ -230,7 +224,6 @@ function SubjectsContent() {
           </div>
         )}
 
-        {/* Subjects grid */}
         {!loading && !error && (
           <motion.section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4" variants={stagger} initial="hidden" animate="show">
             {subjects.map((s, idx) => {
@@ -240,7 +233,7 @@ function SubjectsContent() {
                   whileHover={{ y: -3, boxShadow: "0 16px 40px rgba(2,6,23,0.10)" }}
                   className={`relative group tc bg-white dark:bg-[#111827] border border-slate-200 dark:border-white/8 rounded-2xl shadow-[0_2px_14px_rgba(2,6,23,0.05)] dark:shadow-none overflow-hidden ${s._pending ? "opacity-60" : ""}`}>
 
-                  {/* Clickable area — navigates to subject detail */}
+                  {/* Clickable area */}
                   <button
                     onClick={() => router.push(`/subjects/${s.id}`)}
                     className="w-full text-left flex gap-3 sm:gap-4 items-center px-4 sm:px-5 py-4 sm:py-5 cursor-pointer bg-transparent border-0 pr-12">
@@ -255,10 +248,15 @@ function SubjectsContent() {
                     </div>
                   </button>
 
-                  {/* Delete button — top-right, shows on hover */}
+                  {/* Delete button
+                      Mobile  (< sm): always visible — touch has no hover
+                      Desktop (≥ sm): hidden by default, revealed on group-hover */}
                   <button
                     onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: s.id, name: s.name }); }}
-                    className="absolute top-3 right-3 w-7 h-7 rounded-lg grid place-items-center cursor-pointer border-0 opacity-0 group-hover:opacity-100 transition-all duration-150 bg-red-50 dark:bg-red-500/15 text-red-400 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/25 hover:text-red-600 dark:hover:text-red-300">
+                    className="absolute top-3 right-3 w-7 h-7 rounded-lg grid place-items-center cursor-pointer border-0 transition-all duration-150
+                               bg-red-50 dark:bg-red-500/15 text-red-400 dark:text-red-400
+                               hover:bg-red-100 dark:hover:bg-red-500/25 hover:text-red-600 dark:hover:text-red-300
+                               sm:opacity-0 sm:group-hover:opacity-100">
                     <Trash2 size={13} />
                   </button>
                 </motion.div>
@@ -279,7 +277,6 @@ function SubjectsContent() {
           </motion.section>
         )}
 
-        {/* Empty state */}
         {!loading && !error && subjects.length === 0 && (
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
             className="mt-5 sm:mt-6 text-center py-12 sm:py-16 px-4 sm:px-6 rounded-2xl tc border border-dashed border-slate-200 dark:border-white/10 bg-white/60 dark:bg-white/[0.02]">
@@ -299,7 +296,6 @@ function SubjectsContent() {
       </main>
 
       <AddSubjectModal open={modalOpen} onClose={() => setModalOpen(false)} onAdd={addSubject} />
-
       <DeleteConfirmModal
         open={!!deleteTarget}
         subjectName={deleteTarget?.name ?? ""}

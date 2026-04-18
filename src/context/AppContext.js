@@ -6,11 +6,11 @@ import { apiLogin, apiRegister } from "@/utils/api";
 
 /* ── Admin role check ────────────────────────────────────────────── */
 export const isAdminRole = (role) => role === "admin";
-export const ADMIN_EMAIL  = "admin@lecturebrain.com";
+export const ADMIN_EMAIL = "admin@lecturebrain.com";
 
 /* ── Storage ─────────────────────────────────────────────────────── */
 const STORAGE_TOKEN = "lb_token";
-const STORAGE_USER  = "lb_user";
+const STORAGE_USER = "lb_user";
 
 function saveSession(token, user) {
   try { localStorage.setItem(STORAGE_TOKEN, token); localStorage.setItem(STORAGE_USER, JSON.stringify(user)); } catch { }
@@ -21,13 +21,13 @@ function clearSession() {
 function loadSession() {
   try {
     const token = localStorage.getItem(STORAGE_TOKEN);
-    const raw   = localStorage.getItem(STORAGE_USER);
+    const raw = localStorage.getItem(STORAGE_USER);
     return { token, user: raw ? JSON.parse(raw) : null };
   } catch { return { token: null, user: null }; }
 }
 
 /* ── Contexts ────────────────────────────────────────────────────── */
-const AuthContext  = createContext(null);
+const AuthContext = createContext(null);
 const ThemeContext = createContext(null);
 
 /* ════════════════════════════════════════════════════════════════════
@@ -40,17 +40,17 @@ const ThemeContext = createContext(null);
    }
 ══════════════════════════════════════════════════════════════════════ */
 export function AuthProvider({ children }) {
-  const [user,    setUser]    = useState(null);
-  const [token,   setToken]   = useState(null);
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [ready,   setReady]   = useState(false);
+  const [ready, setReady] = useState(false);
 
   const _persist = useCallback((u, t) => {
     setUser(u);
     setToken(t);
     setAuthToken(t);
     if (u && t) saveSession(t, u);
-    else        clearSession();
+    else clearSession();
   }, []);
 
   /* ── Build normalised user from login response ───────────────────
@@ -61,11 +61,11 @@ export function AuthProvider({ children }) {
   const _buildUser = useCallback((res, emailFallback = "") => {
     const ru = res.user ?? {};
     return {
-      id:       ru.id      ?? ru._id    ?? emailFallback,
-      email:    ru.email   ?? emailFallback,
-      name:     ru.name    ?? ru.email  ?? emailFallback,
-      role:     ru.role    ?? "user",
-      isAdmin:  isAdminRole(ru.role ?? ""),
+      id: ru.id ?? ru._id ?? emailFallback,
+      email: ru.email ?? emailFallback,
+      name: ru.name ?? ru.email ?? emailFallback,
+      role: ru.role ?? "user",
+      isAdmin: isAdminRole(ru.role ?? ""),
       isActive: ru.is_active ?? true,
     };
   }, []);
@@ -135,9 +135,9 @@ export function ThemeProvider({ children }) {
   const [dark, setDark] = useState(false);
 
   useEffect(() => {
-    const saved       = localStorage.getItem("lb_theme");
+    const saved = localStorage.getItem("lb_theme");
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const isDark      = saved ? saved === "dark" : prefersDark;
+    const isDark = saved ? saved === "dark" : prefersDark;
     setDark(isDark);
     document.documentElement.classList.toggle("dark", isDark);
   }, []);
